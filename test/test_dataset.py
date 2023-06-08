@@ -7,15 +7,14 @@ from torchvision import transforms
 
 if __name__ == '__main__':
     file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/'
-    data_transform = transforms.Compose([
-        transforms.ToTensor(),
-        # transforms.Normalize(mean=(0.1307,), std=(0.3081,))
-    ])
+    n_input = 867
+    time_window = 60
+    m_measurement = 20
 
     train_dataset = IMUDataset(file_path, mode='train', transform=None)
     test_dataset = IMUDataset(file_path, mode='test', transform=None)
-    train_data_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
-    test_data_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
+    train_data_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, drop_last=True)
+    test_data_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, drop_last=True)
 
     train_examples = enumerate(train_data_loader)
     test_examples = enumerate(test_data_loader)

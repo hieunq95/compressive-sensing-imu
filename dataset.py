@@ -18,15 +18,17 @@ class IMUDataset(Dataset):
         # data['imu_ori']: A numpy-array of shape (seq_length, 17, 3, 3)
         # data['imu_acc']: A numpy-array of shape (seq_length, 17, 3)
         self.sampling_rate = 60  # Hz
-        self.time_window = 17  # size of a data sample. The number of data samples = int(seq_len / time_window)
+        self.nb_imus = 17
         self.transform = transform
         self.mode = mode
+        self.ori_scaler = MinMaxScaler()
+        self.acc_scaler = MinMaxScaler()
         if self.mode == 'train':
             subjects = [
                         's_01', 's_02',
-                        's_03', 's_04',
-                        's_05', 's_06',
-                        's_07', 's_08'
+                        # 's_03', 's_04',
+                        # 's_05', 's_06',
+                        # 's_07', 's_08'
                         ]
         else:
             subjects = ['s_09', 's_10']
@@ -54,15 +56,10 @@ class IMUDataset(Dataset):
         """
         imu_ori = torch.from_numpy(np.array(self.imu_ori[index], dtype=np.float32))
         imu_acc = torch.from_numpy(np.array(self.imu_acc[index], dtype=np.float32))
-        imu_ori = np.transpose(imu_ori)
-        imu_acc = np.transpose(imu_acc)
 
-        # Flatten for MLP VAE:
+        # Flatten for MLP VAE:   # [self.nb_imus * 3] -> self.nb_imus * 3
         imu_ori = imu_ori.flatten()
         imu_acc = imu_acc.flatten()
-        # print('imu_ori.shape: {}'.format(imu_ori.shape))
-        # imu_ori = self.transform(np.array(self.imu_ori[index], dtype=np.float32))
-        # imu_acc = self.transform(np.array(self.imu_acc[index], dtype=np.float32))
 
         return imu_ori, imu_acc
 
@@ -72,26 +69,21 @@ class IMUDataset(Dataset):
         for f in pkl_files:
             imu_ori_data = pkl.load(open(f, 'rb'), encoding='latin1')['imu_ori']
             imu_acc_data = pkl.load(open(f, 'rb'), encoding='latin1')['imu_acc']
-            # Rotate axes of orientation data
             seq_len = imu_ori_data.shape[0]
-            imu_ori_data = rot_matrix_to_aa(np.reshape(imu_ori_data, [seq_len, 17*9]))
-            imu_ori_data = np.reshape(imu_ori_data, [seq_len, 17, 3])
+            # Rotate axes of orientation data and reshape acceleration data
+            imu_ori_data = rot_matrix_to_aa(np.reshape(imu_ori_data, [seq_len, self.nb_imus * 9]))
+            imu_acc_data = np.reshape(imu_acc_data, [seq_len, self.nb_imus * 3])
             # Divide data into different chunks
-            nb_chunks = int(seq_len / self.time_window)
-            print('--- file: {}, nb_chunks: {}'.format(f, nb_chunks))
-            # Normalize data
-            # Reshape data so that we can fit into scaler
-            imu_ori_data = np.reshape(imu_ori_data, [seq_len, 17*3])
-            imu_acc_data = np.reshape(imu_acc_data, [seq_len, 17*3])
-            scaler = MinMaxScaler().fit(imu_acc_data)
-            imu_ori_data = scaler.transform(imu_ori_data)
-            imu_acc_data = scaler.transform(imu_acc_data)
+            nb_chunks = int(seq_len / 1)  # TODO: should we consider just 1 frame?
+            print('--- file: {}, nb_chunks: {}, imu_ori_data: {}'.format(f, nb_chunks, imu_ori_data.shape))
+            # self.ori_scaler.fit(imu_ori_data)
+            # self.acc_scaler.fit(imu_acc_data)
 
             for i in range(nb_chunks):
-                chunk_i_ori = imu_ori_data[i * self.time_window: (i+1) * self.time_window]  # (time_window, 17*3)
-                chunk_i_acc = imu_acc_data[i * self.time_window: (i+1) * self.time_window]
-                imu_ori_out.append(chunk_i_ori)
-                imu_acc_out.append(chunk_i_acc)
+                # imu_ori_transform = self.ori_scaler.transform(imu_ori_data[i].reshape(1, -1))
+                # imu_acc_transform = self.acc_scaler.transform(imu_acc_data[i].reshape(1, -1))
+                imu_ori_out.append(imu_ori_data[i])
+                imu_acc_out.append(imu_acc_data[i])
 
         return imu_ori_out, imu_acc_out
 
@@ -205,11 +197,6 @@ class CompSensDataset(LightningDataModule):
         self.pin_memory = pin_memory
 
     def setup(self, stage: Optional[str] = None) -> None:
-        data_transforms = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=(0,), std=(0.3081,))
-        ])
-
         self.train_dataset = IMUDataset(self.data_dir, mode='train', transform=None)
         self.test_dataset = IMUDataset(self.data_dir, mode='test', transform=None)
 
@@ -219,6 +206,7 @@ class CompSensDataset(LightningDataModule):
             batch_size=self.train_batch_size,
             num_workers=self.num_workers,
             shuffle=True,
+            drop_last=True,
             pin_memory=self.pin_memory,
         )
 
@@ -228,14 +216,16 @@ class CompSensDataset(LightningDataModule):
             batch_size=self.val_batch_size,
             num_workers=self.num_workers,
             shuffle=False,
+            drop_last=True,
             pin_memory=self.pin_memory,
         )
 
     def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
         return DataLoader(
             self.test_dataset,
-            batch_size=4,
+            batch_size=self.val_batch_size,
             num_workers=self.num_workers,
-            shuffle=True,
+            shuffle=False,
+            drop_last=True,
             pin_memory=self.pin_memory,
         )

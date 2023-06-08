@@ -205,6 +205,7 @@ class MyVAE(BaseVAE):
     def __init__(self,
                  in_channels: int,
                  latent_dim: int,
+                 in_size: int,
                  hidden_dims: List = None,
                  **kwargs) -> None:
         super(MyVAE, self).__init__()
@@ -215,7 +216,7 @@ class MyVAE(BaseVAE):
         # Define the encoder layers as a list of tuples, where each tuple contains the
         # layer type and its corresponding parameters.
         encoder_layers = [
-            nn.Linear(3*17*17, 512),
+            nn.Linear(in_size, 512),
             nn.ReLU(),
             nn.Linear(512, 512),
             nn.ReLU(),
@@ -229,7 +230,7 @@ class MyVAE(BaseVAE):
             nn.ReLU(),
             nn.Linear(256, 256),
             nn.ReLU(),
-            nn.Linear(256, 3*17*17),
+            nn.Linear(256, in_size),
             nn.Sigmoid()
         ]
 
@@ -312,11 +313,12 @@ class MyVAE(BaseVAE):
         # print('recons.shape: {}, input.shape: {}'.format(recons.shape, input.shape))
 
         kld_weight = kwargs['M_N']  # Account for the minibatch samples from the dataset
-        recons_loss = F.mse_loss(recons, input)
+        recons_loss = F.mse_loss(recons, input, reduction='mean')
 
-        kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
+        kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)
 
         loss = recons_loss + kld_weight * kld_loss
+        # loss = recons_loss
         return {'loss': loss, 'Reconstruction_Loss':recons_loss.detach(), 'KLD':-kld_loss.detach()}
 
     def sample(self,

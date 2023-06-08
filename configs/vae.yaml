@@ -1,8 +1,9 @@
 model_params:
   name: 'VanillaVAE'
   in_channels: 3
-  latent_dim: 20
+  latent_dim: 10
   hidden_dims: [4, 16, 64, 256, 512]
+  in_size: 30
 
 # "/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/"
 # "~/Data/"
@@ -20,6 +21,9 @@ exp_params:
   scheduler_gamma: 0.95
   kld_weight: 0.00025
   manual_seed: 1265
+  m_measurement: 30
+  n_input: 51
+  time_window: 60
 
 trainer_params:
   gpus: [0]

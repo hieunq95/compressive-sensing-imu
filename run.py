@@ -3,6 +3,9 @@ import argparse
 import yaml
 import torchvision.utils as vutils
 import pytorch_lightning as pl
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
 from pathlib import Path
 from vae import VanillaVAE, BaseVAE, MyVAE
 from dataset import VAEDataset, CompSensDataset
@@ -22,6 +25,9 @@ class VAEXperiment(pl.LightningModule):
 
         self.model = vae_model
         self.params = params
+        self.m_measurement = self.params['m_measurement']
+        self.n_input = self.params['n_input']
+        self.time_window = self.params['time_window']
         self.curr_device = None
         self.hold_graph = False
         try:
@@ -33,10 +39,16 @@ class VAEXperiment(pl.LightningModule):
         return self.model(input, **kwargs)
 
     def training_step(self, batch, batch_idx, optimizer_idx=0):
-        imu_ori, imu_acc = batch
+        # TODO: Normalize data here instead of dataloader
+        imu_ori, imu_acc = batch  # (64, 51)
         self.curr_device = imu_ori.device
+        A = 1 / self.m_measurement * torch.randn(self.n_input, self.m_measurement)
+        noise = 0.1 * torch.randn(self.trainer.datamodule.train_batch_size, self.m_measurement)
+        # (64, n) x (n, m) + (64, m) -> (64, m)
+        y_batch = torch.matmul(imu_ori.cpu().data, A) + noise
+        y_batch = y_batch.to(self.curr_device)
 
-        results = self.forward(imu_ori)
+        results = self.forward(y_batch)
         train_loss = self.model.loss_function(*results,
                                               M_N=self.params['kld_weight'],  # al_img.shape[0]/ self.num_train_imgs,
                                               optimizer_idx=optimizer_idx,
@@ -47,10 +59,15 @@ class VAEXperiment(pl.LightningModule):
         return train_loss['loss']
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
-        imu_ori, imu_acc = batch
+        imu_ori, imu_acc = batch  # (64, 51)
         self.curr_device = imu_ori.device
+        A = 1 / self.m_measurement * torch.randn(self.n_input, self.m_measurement)
+        noise = 0.1 * torch.randn(self.trainer.datamodule.val_batch_size, self.m_measurement)
+        # (64, n) x (n, m) + (64, m) -> (64, m)
+        y_batch = torch.matmul(imu_ori.cpu().data, A) + noise
+        y_batch = y_batch.to(self.curr_device)
 
-        results = self.forward(imu_ori)
+        results = self.forward(y_batch)
         val_loss = self.model.loss_function(*results,
                                             M_N=1.0,  # real_img.shape[0]/ self.num_val_imgs,
                                             optimizer_idx=optimizer_idx,
@@ -67,8 +84,14 @@ class VAEXperiment(pl.LightningModule):
         test_input = test_input.to(self.curr_device)
         test_label = test_label.to(self.curr_device)
 
+        A = torch.randn(self.n_input, self.m_measurement)
+        noise = 0.1 * torch.randn(self.trainer.datamodule.val_batch_size, self.m_measurement)
+        # (64, n) x (n, m) + (64, m) -> (64, m)
+        y_batch = torch.matmul(test_input.cpu().data, A) + noise
+        y_batch = y_batch.to(self.curr_device)
+
         # test_input, test_label = batch
-        recons = self.model.generate(test_input)
+        recons = self.model.generate(y_batch)
         # print('recons: {}'.format(recons))
         vutils.save_image(recons.data,
                           os.path.join(self.logger.log_dir,
@@ -78,15 +101,34 @@ class VAEXperiment(pl.LightningModule):
                           nrow=2)
 
         try:
-            samples = self.model.sample(1,
-                                        self.curr_device,
-                                        labels=test_label)
-            vutils.save_image(samples.cpu().data,
-                              os.path.join(self.logger.log_dir,
-                                           "Samples",
-                                           f"{self.logger.name}_Epoch_{self.current_epoch}.png"),
-                              normalize=True,
-                              nrow=2)
+            samples = self.model.sample(64,
+                                        self.curr_device,)  # shape (3*17*17,)
+            # print('samples: {}'.format(samples))
+            # Reshape data to the original format
+            # samples = np.reshape(samples.cpu().data, [self.time_window, 17 * 3])
+            # # Denormalize the data
+            # scaler = self.trainer.datamodule.test_dataloader().dataset.scaler
+            # samples = scaler.inverse_transform(samples)  # shape ([seq_len, 17*3])
+            #
+            # samples = np.reshape(samples, [self.time_window, 17, 3])
+            #
+            # if self.current_epoch % 3 == 0:
+            #
+            #     plt.plot(samples[:, 0, 0])
+            #     plt.xlabel('Frame')
+            #     plt.ylabel('IMU reading')
+            #     plt.legend()
+            #     plt.savefig(os.path.join(self.logger.log_dir,
+            #                                    "Samples",
+            #                                    f"{self.logger.name}_Epoch_{self.current_epoch}.png"),)
+            #     plt.close()
+
+            # vutils.save_image(samples.cpu().data,
+            #                   os.path.join(self.logger.log_dir,
+            #                                "Samples",
+            #                                f"{self.logger.name}_Epoch_{self.current_epoch}.png"),
+            #                   normalize=True,
+            #                   nrow=2)
         except Warning:
             pass
 
