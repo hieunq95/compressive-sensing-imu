@@ -124,11 +124,11 @@ class VanillaVAE(BaseVAE):
         :return: (Tensor) [B x C x H x W]
         """
         result = self.decoder_input(z)
-        print('result z: {}'.format(result.shape))
+        # print('result z: {}'.format(result.shape))
         result = result.view(-1, 512, 1, 1)
         result = self.decoder(result)
         result = self.final_layer(result)
-        print('result final: {}'.format(result.shape))
+        # print('result final: {}'.format(result.shape))
         return result
 
     def reparameterize(self, mu: Tensor, logvar: Tensor) -> Tensor:
@@ -163,7 +163,7 @@ class VanillaVAE(BaseVAE):
         mu = args[2]
         log_var = args[3]
 
-        print('recons.shape: {}, input.shape: {}'.format(recons.shape, input.shape))
+        # print('recons.shape: {}, input.shape: {}'.format(recons.shape, input.shape))
 
         kld_weight = kwargs['M_N']  # Account for the minibatch samples from the dataset
         recons_loss = F.mse_loss(recons, input)
@@ -206,17 +206,20 @@ class MyVAE(BaseVAE):
                  in_channels: int,
                  latent_dim: int,
                  in_size: int,
+                 out_size: int,
                  hidden_dims: List = None,
                  **kwargs) -> None:
         super(MyVAE, self).__init__()
 
         self.latent_dim = latent_dim
         self.in_channels = in_channels
+        self.in_size = in_size
+        self.out_size = out_size
 
         # Define the encoder layers as a list of tuples, where each tuple contains the
         # layer type and its corresponding parameters.
         encoder_layers = [
-            nn.Linear(in_size, 512),
+            nn.Linear(self.in_size, 512),
             nn.ReLU(),
             nn.Linear(512, 512),
             nn.ReLU(),
@@ -226,12 +229,12 @@ class MyVAE(BaseVAE):
         # Define the decoder layers as a list of tuples, where each tuple contains the
         # layer type and its corresponding parameters.
         decoder_layers = [
-            nn.Linear(latent_dim, 256),
+            nn.Linear(latent_dim, 512),
             nn.ReLU(),
-            nn.Linear(256, 256),
+            nn.Linear(512, 512),
             nn.ReLU(),
-            nn.Linear(256, in_size),
-            nn.Sigmoid()
+            nn.Linear(512, self.out_size),
+            # nn.Sigmoid()
         ]
 
         self.encoder = nn.Sequential(*encoder_layers)
@@ -291,9 +294,10 @@ class MyVAE(BaseVAE):
 
         # Decode the latent code to get the reconstructed output.
         x_hat = self.decoder(z)
+        A = kwargs['A']
 
         # Return the reconstructed output, mean, and log-variance for use in the loss function.
-        return [x_hat, input, mu, logvar]
+        return [x_hat, input, mu, logvar, A]
 
     def loss_function(self,
                       *args,
@@ -301,25 +305,26 @@ class MyVAE(BaseVAE):
         """
         Computes the VAE loss function.
         KL(N(\mu, \sigma), N(0, 1)) = \log \frac{1}{\sigma} + \frac{\sigma^2 + \mu^2}{2} - \frac{1}{2}
-        :param args:
+        :param args:s_func
         :param kwargs:
         :return:
         """
-        recons = args[0]
+        recons = args[0]  # (b, n)
         input = args[1]
         mu = args[2]
         log_var = args[3]
-
-        # print('recons.shape: {}, input.shape: {}'.format(recons.shape, input.shape))
+        A = args[4]  # (n, m)
 
         kld_weight = kwargs['M_N']  # Account for the minibatch samples from the dataset
+
+        recons = torch.matmul(recons, A)  # (b, n) x (n, m) -> (b, m)
         recons_loss = F.mse_loss(recons, input, reduction='mean')
 
         kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)
 
         loss = recons_loss + kld_weight * kld_loss
         # loss = recons_loss
-        return {'loss': loss, 'Reconstruction_Loss':recons_loss.detach(), 'KLD':-kld_loss.detach()}
+        return {'loss': loss, 'Reconstruction_Loss': recons_loss.detach(), 'KLD': -kld_loss.detach()}
 
     def sample(self,
                num_samples: int,
@@ -340,10 +345,4 @@ class MyVAE(BaseVAE):
         return samples
 
     def generate(self, x: Tensor, **kwargs) -> Tensor:
-        """
-        Given an input image x, returns the reconstructed image
-        :param x: (Tensor) [B x C x H x W]
-        :return: (Tensor) [B x C x H x W]
-        """
-
-        return self.forward(x)[0]
+        return self.forward(x, **kwargs)[0]

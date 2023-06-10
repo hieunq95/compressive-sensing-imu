@@ -19,6 +19,11 @@ if __name__ == '__main__':
     train_examples = enumerate(train_data_loader)
     test_examples = enumerate(test_data_loader)
 
+    test_len = len(list(iter(test_data_loader)))
+    print('test_len: {}'.format(test_len))
+    random_idx = np.random.choice(test_len)
+    print('random element: {}'.format(list(iter(test_data_loader))[random_idx]))
+
     for e in train_examples:
         batch_idx, (imu_ori, imu_acc) = e
         print('index: {}, imu_ori.shape: {}, imu_acc.shape: {}'.format(batch_idx, imu_ori.shape, imu_acc.shape))
