@@ -215,30 +215,29 @@ class MyVAE(BaseVAE):
         self.in_channels = in_channels
         self.in_size = in_size
         self.out_size = out_size
+        self.h_dim = 128
 
         # Define the encoder layers as a list of tuples, where each tuple contains the
         # layer type and its corresponding parameters.
         encoder_layers = [
-            nn.Linear(self.in_size, 512),
+            nn.Linear(self.in_size, self.h_dim),
             nn.ReLU(),
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, latent_dim * 2)  # output size is twice the latent size (mean and variance)
         ]
+
+        self.encoder = nn.Sequential(*encoder_layers)  # x -> encoder
+        self.fc_mu = nn.Linear(self.h_dim, self.latent_dim)  # encoder -> fc_mu
+        self.fc_var = nn.Linear(self.h_dim, self.latent_dim)  # encoder -> fc_var
 
         # Define the decoder layers as a list of tuples, where each tuple contains the
         # layer type and its corresponding parameters.
+        self.decoder_input = nn.Linear(self.latent_dim, self.h_dim)  # fc_mu, fc_var -> decoder_input
         decoder_layers = [
-            nn.Linear(latent_dim, 512),
             nn.ReLU(),
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, self.out_size),
+            nn.Linear(self.h_dim, self.out_size),
             # nn.Sigmoid()
         ]
 
-        self.encoder = nn.Sequential(*encoder_layers)
-        self.decoder = nn.Sequential(*decoder_layers)
+        self.decoder = nn.Sequential(*decoder_layers)  # decoder_input -> decoder -> x_hat
 
     def encode(self, input: Tensor) -> List[Tensor]:
         """
@@ -264,12 +263,9 @@ class MyVAE(BaseVAE):
         :param z: (Tensor) [B x D]
         :return: (Tensor) [B x C x H x W]
         """
-        result = self.decoder(z)
-        # print('result z: {}'.format(result.shape))
-        # result = result.view(-1, 512, 1, 1)
-        # result = self.decoder(result)
-        # result = self.final_layer(result)
-        # print('result final: {}'.format(result.shape))
+        result = self.decoder_input(z)
+        result = self.decoder(result)
+
         return result
 
     def reparameterize(self, mu: Tensor, logvar: Tensor) -> Tensor:
@@ -285,19 +281,18 @@ class MyVAE(BaseVAE):
         return eps * std + mu
 
     def forward(self, input: Tensor, **kwargs) -> List[Tensor]:
-        # Encode the input data to get the mean and log-variance of the latent distribution.
-        x = self.encoder(input)
-        mu, logvar = torch.chunk(x, 2, dim=1)
+        # Encode the input data to get the mean and log-variance of the latent distribution
+        mu, log_var = self.encode(input)
 
         # Reparameterize the latent distribution and get the latent code z.
-        z = self.reparameterize(mu, logvar)
+        z = self.reparameterize(mu, log_var)
 
         # Decode the latent code to get the reconstructed output.
-        x_hat = self.decoder(z)
+        x_hat = self.decode(z)
         A = kwargs['A']
 
         # Return the reconstructed output, mean, and log-variance for use in the loss function.
-        return [x_hat, input, mu, logvar, A]
+        return [x_hat, input, mu, log_var, A]
 
     def loss_function(self,
                       *args,

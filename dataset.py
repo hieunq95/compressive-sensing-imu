@@ -26,13 +26,17 @@ class IMUDataset(Dataset):
         self.acc_scaler = MinMaxScaler()
         if self.mode == 'train':
             subjects = [
-                        's_01', 's_02',
+                        's_01',
+                        's_02',
                         's_03', 's_04',
                         's_05', 's_06',
                         's_07', 's_08'
                         ]
         else:
-            subjects = ['s_09', 's_10']
+            subjects = [
+                        's_09',
+                        's_10'
+                        ]
         pkl_files = []
         for s in subjects:
             subject_path = os.path.join(data_path, 'DIP_IMU/{}/'.format(s))
@@ -68,14 +72,15 @@ class IMUDataset(Dataset):
             # Divide data into different chunks
             nb_chunks = int(seq_len / self.time_window)  # TODO: should we consider just 1 frame?
             print('--- file: {}, nb_chunks: {}, imu_ori_data: {}'.format(f, nb_chunks, imu_ori_data.shape))
-            # self.ori_scaler.fit(imu_ori_data)
-            # self.acc_scaler.fit(imu_acc_data)
 
             for i in range(nb_chunks):
                 # imu_ori_transform = self.ori_scaler.transform(imu_ori_data[i].reshape(1, -1))
                 # imu_acc_transform = self.acc_scaler.transform(imu_acc_data[i].reshape(1, -1))
                 imu_ori_out.append(imu_ori_data[i])
                 imu_acc_out.append(imu_acc_data[i])
+
+        self.ori_scaler.fit(imu_ori_out)
+        self.acc_scaler.fit(imu_acc_out)
 
         return imu_ori_out, imu_acc_out
 
@@ -109,7 +114,7 @@ class CompSensDataset(LightningDataModule):
             self.train_dataset,
             batch_size=self.train_batch_size,
             num_workers=self.num_workers,
-            shuffle=False,
+            shuffle=True,
             drop_last=True,
             pin_memory=self.pin_memory,
         )

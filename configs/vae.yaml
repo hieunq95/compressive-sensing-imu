@@ -10,14 +10,14 @@ model_params:
 # "~/Data/"
 data_params:
   data_path: "/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/"
-  train_batch_size: 240
-  val_batch_size:  120
+  train_batch_size: 128
+  val_batch_size:  128
   patch_size: 4
   num_workers: 4
 
 
 exp_params:
-  LR: 0.01
+  LR: 0.005
   weight_decay: 0.0
   scheduler_gamma: 0.95
   kld_weight: 0.00025
@@ -28,7 +28,7 @@ exp_params:
 
 trainer_params:
   gpus: [0]
-  max_epochs: 51
+  max_epochs: 101
 
 logging_params:
   save_dir: "logs/"

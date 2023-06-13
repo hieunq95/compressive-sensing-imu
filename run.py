@@ -36,6 +36,7 @@ class VAEXperiment(pl.LightningModule):
         self.hold_graph = False
         self.A = 1 / self.m_measurement * torch.randn(self.n_input, self.m_measurement)
         self.noise_std = 0.01
+        self.compress_loss = []
         try:
             self.hold_graph = self.params['retain_first_backpass']
         except:
@@ -53,7 +54,7 @@ class VAEXperiment(pl.LightningModule):
         self.curr_device = imu_ori.device
         noise = self.noise_std * torch.randn(batch_size, self.m_measurement)
         # (b * tw, n) x (n, m) + (b * tw, m) -> (b * tw, m)
-        y_batch = torch.matmul(imu_ori_data, self.A) + noise
+        y_batch = torch.matmul(self.normalize_data(imu_ori_data, False), self.A) + noise
         y_batch = y_batch.to(self.curr_device)
 
         results = self.forward(y_batch, A=self.A.to(self.curr_device))
@@ -74,7 +75,7 @@ class VAEXperiment(pl.LightningModule):
         self.curr_device = imu_ori.device
         noise = self.noise_std * torch.randn(batch_size, self.m_measurement)
         # (b * tw, n) x (n, m) + (b * tw, m) -> (b * tw, m)
-        y_batch = torch.matmul(imu_ori_data, self.A) + noise
+        y_batch = torch.matmul(self.normalize_data(imu_ori_data, False), self.A) + noise
         y_batch = y_batch.to(self.curr_device)
 
         results = self.forward(y_batch, A=self.A.to(self.curr_device))
@@ -88,9 +89,21 @@ class VAEXperiment(pl.LightningModule):
     def on_validation_end(self) -> None:
         self.sample_data()
 
+    def get_l2_norm(self, x, y):
+        l2_norm_array = np.power(np.subtract(x, y), 2)
+        return torch.mean(l2_norm_array)
+
     def save_fig(self, filename):
         plt.savefig(filename)
         plt.close()
+
+    def normalize_data(self, x, normalize=True):
+        if normalize:
+            ori_scaler = self.trainer.datamodule.train_dataset.ori_scaler
+            x_ = Tensor(ori_scaler.transform(x))
+        else:
+            x_ = x
+        return x_
 
     def sample_data(self):
         # Get sample reconstruction data
@@ -103,7 +116,8 @@ class VAEXperiment(pl.LightningModule):
 
         # (b, n) x (n, m) -> (b, m)
         noise = self.noise_std * torch.randn(self.trainer.datamodule.val_batch_size, self.m_measurement)
-        y_batch = torch.matmul(test_imu_ori.cpu().data, self.A) + noise
+        test_imu_ori = self.normalize_data(test_imu_ori.cpu().data, False)
+        y_batch = torch.matmul(test_imu_ori, self.A) + noise
         y_batch = y_batch.to(self.curr_device)
 
         nb_imus = self.trainer.datamodule.train_dataloader().dataset.nb_imus
@@ -114,15 +128,31 @@ class VAEXperiment(pl.LightningModule):
         recons = self.model.generate(y_batch, A=self.A)
         recons = np.reshape(recons.cpu().data, [nb_samples, int(sample_size / 3), 3])
         labels = np.reshape(test_imu_ori.cpu().data, [nb_samples, int(sample_size / 3), 3])
+
+        cs_loss = self.get_l2_norm(recons, labels)
+        self.compress_loss.append(cs_loss)
+
         fname = os.path.join(self.logger.log_dir, "Reconstructions",
                              f"{self.logger.name}_Epoch_{self.current_epoch}.png")
 
-        plt.plot(recons[:, 7, 1], '--', label='Recons')
-        plt.plot(labels[:, 7, 1], label='Labels')
-        plt.xlabel('Frame')
-        plt.ylabel('IMU reading')
-        plt.title('Reconstruction')
-        plt.legend()
+        figure, (ax1, ax2) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [2, 1]})
+        ax1.plot(recons[:, 7, 1], linestyle='--', label='Recons')
+        ax1.plot(labels[:, 7, 1], linestyle='-', label='Labels')
+        ax1.set_title('Real-time prediction')
+        ax1.set_xlabel('Frame')
+        ax1.set_ylabel('IMU reading')
+        ax1.grid(linestyle='--')
+
+        ax2.plot(self.compress_loss)
+        ax2.set_title('Compress_loss on test data')
+        ax2.set_xlabel('Epoch')
+        ax2.set_ylabel('Loss')
+        ax2.grid(linestyle='--')
+
+        ax1.legend()
+        ax2.legend()
+        figure.tight_layout()
+
         save_thread = threading.Thread(target=self.save_fig, args=(fname,))
         save_thread.start()
 
