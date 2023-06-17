@@ -1,21 +1,19 @@
 model_params:
   name: 'ConvoVAE'
   in_channels: 1
-  latent_dim: 20
-  in_size: 10
-  out_size: 17
-  time_window: 12
+  latent_dim: 12
+  in_size: &m 17
+  out_size: &n 34
+  time_window: &tw 12
 
-# "/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/"
-# "~/Data/"
 data_params:
   data_path: "/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/"
   train_batch_size: 128
   val_batch_size:  128
   patch_size: 4
   num_workers: 4
-  time_window: 12
-  conv_data: True
+  conv_data: &cv True
+  time_window: *tw
 
 exp_params:
   LR: 0.005
@@ -23,12 +21,12 @@ exp_params:
   scheduler_gamma: 0.95
   kld_weight: 0.00025
   manual_seed: 1265
-  m_measurement: 10
-  n_input: 17
-  time_window: 12
-  conv_data: True
+  m_measurement: *m
+  n_input: *n
+  time_window: *tw
+  conv_data: *cv
 
-trainer_params:
+trainer_params: &trainer_params
   gpus: [0]
   max_epochs: 101
 

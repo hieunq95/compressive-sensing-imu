@@ -46,32 +46,53 @@ class IMUDataset(Dataset):
                     pkl_files.append(os.path.join(subject_path, f))
 
         print('Loading {} IMU readings from files: ... \n'.format(self.mode))
-        self.imu_ori, self.imu_acc = self.__get_data_chunks(pkl_files)
-        print('Dataset length: {}'.format(self.__len__()))
-        print('One sample shape: {}'.format(self.imu_ori[0].shape))
+        self.imu, self.imu_ori, self.imu_acc = self.__get_data_chunks(pkl_files)
+        print('{} dataset length: {}'.format(self.mode, self.__len__()))
+        print('One sample shape: {}'.format(self.imu[0].shape))
 
     def __len__(self):
         # Return the number of chunks
-        return len(self.imu_ori)
+        return len(self.imu)
 
     def __getitem__(self, index):
         imu_ori = torch.from_numpy(np.array(self.imu_ori[index], dtype=np.float32))  # (time_window, nb_imus * 3)
         imu_acc = torch.from_numpy(np.array(self.imu_acc[index], dtype=np.float32))
+        imu = torch.from_numpy(np.array(self.imu[index], dtype=np.float32))
 
-        return imu_ori, imu_acc
+        return imu, imu_ori, imu_acc
 
     def __get_data_chunks(self, pkl_files):
         imu_ori_out = []
         imu_acc_out = []
+        imu_out = []
         for f in pkl_files:
             imu_ori_data = pkl.load(open(f, 'rb'), encoding='latin1')['imu_ori']
             imu_acc_data = pkl.load(open(f, 'rb'), encoding='latin1')['imu_acc']
             seq_len = imu_ori_data.shape[0]
-
             if self.conv_data:
                 imu_ori_data = rot_matrix_to_aa(np.reshape(imu_ori_data, [seq_len, self.nb_imus * 9]))
                 imu_ori_data = np.reshape(imu_ori_data, [seq_len, self.nb_imus, 3])
-                nb_chunks = int(seq_len / self.time_window)
+            # Reshape
+            imu_ori_data = np.reshape(imu_ori_data, [seq_len, self.nb_imus * 3])
+            imu_acc_data = np.reshape(imu_acc_data, [seq_len, self.nb_imus * 3])
+            # rescale accleration
+            imu_acc_data = imu_acc_data / 9.8
+            imu_data = np.concatenate((imu_ori_data, imu_acc_data), axis=1)
+            # count number of Nan entries
+            nan_mask = np.isnan(imu_data)
+            row_nan_mask = np.any(nan_mask, axis=1)
+            num_nan = np.count_nonzero(row_nan_mask)
+            # discard entries with Nan values
+            print('-- discard {} Nan entries out of {} entries----'.format(num_nan, seq_len))
+            imu_data = imu_data[~np.isnan(imu_data).any(axis=1)]
+            new_seq_len = seq_len - num_nan
+            # Reshape again
+            imu_ori_data = np.reshape(imu_ori_data, [seq_len, self.nb_imus, 3])
+            imu_acc_data = np.reshape(imu_acc_data, [seq_len, self.nb_imus, 3])
+            imu_data = np.reshape(imu_data, [new_seq_len, self.nb_imus * 2, 3])
+
+            if self.conv_data:
+                nb_chunks = int(new_seq_len / self.time_window)
                 print('--- file: {}, nb_chunks: {}, imu_ori_data: {}'.format(f, nb_chunks, imu_ori_data.shape))
 
                 for i in range(nb_chunks - 1):
@@ -79,10 +100,12 @@ class IMUDataset(Dataset):
                     imu_ori_transform = imu_ori_data[i * self.time_window: (i + 1) * self.time_window]
                     imu_ori_transform = np.reshape(imu_ori_transform, [self.time_window, self.nb_imus * 3])
                     imu_acc_transform = imu_acc_data[i * self.time_window: (i + 1) * self.time_window]
-                    # np.transpose(imu_acc_transform, (2, 0, 1))
                     imu_acc_transform = np.reshape(imu_acc_transform, [self.time_window, self.nb_imus * 3])
+                    imu_transform = imu_data[i * self.time_window: (i + 1) * self.time_window]
+                    imu_transform = np.reshape(imu_transform, [self.time_window, self.nb_imus * 2 * 3])
                     imu_ori_out.append(imu_ori_transform)
                     imu_acc_out.append(imu_acc_transform)
+                    imu_out.append(imu_transform)
             else:
 
                 # Rotate axes of orientation data and reshape acceleration data
@@ -97,7 +120,7 @@ class IMUDataset(Dataset):
                     imu_ori_out.append(imu_ori_data[i])
                     imu_acc_out.append(imu_acc_data[i])
 
-        return imu_ori_out, imu_acc_out
+        return imu_out, imu_ori_out, imu_acc_out
 
 
 class CompSensDataset(LightningDataModule):

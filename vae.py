@@ -69,6 +69,7 @@ class ConvoVAE(BaseVAE):
         self.compress_ratio = self.out_size / self.in_size
 
         self.encoder = nn.Sequential(
+            nn.Dropout(0.2),
             nn.Conv2d(in_channels, 32, kernel_size=(3, 3), stride=(1, 1), padding=1),
             nn.LeakyReLU(0.01),
             nn.Conv2d(32, 64, kernel_size=(3, 3), stride=(2, 2), padding=1),
