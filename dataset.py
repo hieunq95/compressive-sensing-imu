@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from imu_utils import *
 from typing import Union, List, Sequence, Optional
-from sklearn.preprocessing import MinMaxScaler
+# from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import DataLoader, Dataset, random_split
 from torchvision.datasets import CelebA, MNIST
 from torchvision import transforms
@@ -13,17 +13,18 @@ from pytorch_lightning import LightningDataModule
 
 # IMU dataset
 class IMUDataset(Dataset):
-    def __init__(self, data_path, mode='train', transform=None):
+    def __init__(self, data_path, time_window=1, conv_data=False, mode='train', transform=None):
         # Take IMU readings ad input
         # data['imu_ori']: A numpy-array of shape (seq_length, 17, 3, 3)
         # data['imu_acc']: A numpy-array of shape (seq_length, 17, 3)
         self.sampling_rate = 60  # Hz
         self.nb_imus = 17
-        self.time_window = 1  # 0.1s
+        self.time_window = time_window  # 0.1s
         self.transform = transform
         self.mode = mode
-        self.ori_scaler = MinMaxScaler()
-        self.acc_scaler = MinMaxScaler()
+        self.conv_data = conv_data
+        # self.ori_scaler = MinMaxScaler()
+        # self.acc_scaler = MinMaxScaler()
         if self.mode == 'train':
             subjects = [
                         's_01',
@@ -66,21 +67,35 @@ class IMUDataset(Dataset):
             imu_ori_data = pkl.load(open(f, 'rb'), encoding='latin1')['imu_ori']
             imu_acc_data = pkl.load(open(f, 'rb'), encoding='latin1')['imu_acc']
             seq_len = imu_ori_data.shape[0]
-            # Rotate axes of orientation data and reshape acceleration data
-            imu_ori_data = rot_matrix_to_aa(np.reshape(imu_ori_data, [seq_len, self.nb_imus * 9]))
-            imu_acc_data = np.reshape(imu_acc_data, [seq_len, self.nb_imus * 3])
-            # Divide data into different chunks
-            nb_chunks = int(seq_len / self.time_window)  # TODO: should we consider just 1 frame?
-            print('--- file: {}, nb_chunks: {}, imu_ori_data: {}'.format(f, nb_chunks, imu_ori_data.shape))
 
-            for i in range(nb_chunks):
-                # imu_ori_transform = self.ori_scaler.transform(imu_ori_data[i].reshape(1, -1))
-                # imu_acc_transform = self.acc_scaler.transform(imu_acc_data[i].reshape(1, -1))
-                imu_ori_out.append(imu_ori_data[i])
-                imu_acc_out.append(imu_acc_data[i])
+            if self.conv_data:
+                imu_ori_data = rot_matrix_to_aa(np.reshape(imu_ori_data, [seq_len, self.nb_imus * 9]))
+                imu_ori_data = np.reshape(imu_ori_data, [seq_len, self.nb_imus, 3])
+                nb_chunks = int(seq_len / self.time_window)
+                print('--- file: {}, nb_chunks: {}, imu_ori_data: {}'.format(f, nb_chunks, imu_ori_data.shape))
 
-        self.ori_scaler.fit(imu_ori_out)
-        self.acc_scaler.fit(imu_acc_out)
+                for i in range(nb_chunks - 1):
+                    # (tw, nb_imus, 3) -> (tw, nb_imus * 3)
+                    imu_ori_transform = imu_ori_data[i * self.time_window: (i + 1) * self.time_window]
+                    imu_ori_transform = np.reshape(imu_ori_transform, [self.time_window, self.nb_imus * 3])
+                    imu_acc_transform = imu_acc_data[i * self.time_window: (i + 1) * self.time_window]
+                    # np.transpose(imu_acc_transform, (2, 0, 1))
+                    imu_acc_transform = np.reshape(imu_acc_transform, [self.time_window, self.nb_imus * 3])
+                    imu_ori_out.append(imu_ori_transform)
+                    imu_acc_out.append(imu_acc_transform)
+            else:
+
+                # Rotate axes of orientation data and reshape acceleration data
+                imu_ori_data = rot_matrix_to_aa(np.reshape(imu_ori_data, [seq_len, self.nb_imus * 9]))
+                imu_acc_data = np.reshape(imu_acc_data, [seq_len, self.nb_imus * 3])
+                # Divide data into different chunks
+                nb_chunks = seq_len  # TODO: should we consider just 1 frame?
+                print('--- file: {}, nb_chunks: {}, imu_ori_data: {}'.format(f, nb_chunks, imu_ori_data.shape))
+
+                for i in range(nb_chunks):
+                    # (1, nb_imus * 3)
+                    imu_ori_out.append(imu_ori_data[i])
+                    imu_acc_out.append(imu_acc_data[i])
 
         return imu_ori_out, imu_acc_out
 
@@ -94,6 +109,8 @@ class CompSensDataset(LightningDataModule):
             patch_size: Union[int, Sequence[int]] = (256, 256),
             num_workers: int = 0,
             pin_memory: bool = False,
+            time_window: int = 1,
+            conv_data: bool = False,
             **kwargs,
     ):
         super().__init__()
@@ -104,10 +121,14 @@ class CompSensDataset(LightningDataModule):
         self.patch_size = patch_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
+        self.time_window = time_window
+        self.conv_data = conv_data
 
     def setup(self, stage: Optional[str] = None) -> None:
-        self.train_dataset = IMUDataset(self.data_dir, mode='train', transform=None)
-        self.test_dataset = IMUDataset(self.data_dir, mode='test', transform=None)
+        self.train_dataset = IMUDataset(self.data_dir, time_window=self.time_window,
+                                        conv_data=self.conv_data, mode='train', transform=None)
+        self.test_dataset = IMUDataset(self.data_dir, time_window=self.time_window,
+                                       conv_data=self.conv_data, mode='test', transform=None)
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(

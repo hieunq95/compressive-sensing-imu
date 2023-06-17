@@ -7,6 +7,25 @@ from abc import abstractmethod
 from typing import List, Any
 
 
+class Reshape(nn.Module):
+    def __init__(self, *args):
+        super().__init__()
+        self.shape = args
+
+    def forward(self, x):
+        return x.view(self.shape)
+
+
+class Trim(nn.Module):
+    def __init__(self, *args):
+        super().__init__()
+        self.height = args[0]
+        self.width = args[1]
+
+    def forward(self, x):
+        return x[:, :, :self.height, :self.width]
+
+
 class BaseVAE(nn.Module):
 
     def __init__(self) -> None:
@@ -33,112 +52,65 @@ class BaseVAE(nn.Module):
         pass
 
 
-class VanillaVAE(BaseVAE):
+class ConvoVAE(BaseVAE):
     def __init__(self,
                  in_channels: int,
                  latent_dim: int,
-                 hidden_dims: List = None,
+                 in_size: int,
+                 out_size: int,
+                 time_window: int,
                  **kwargs) -> None:
-        super(VanillaVAE, self).__init__()
+        super(ConvoVAE, self).__init__()
 
         self.latent_dim = latent_dim
-        self.in_channels = in_channels
+        self.in_size = in_size
+        self.out_size = out_size
+        self.time_window = time_window
+        self.compress_ratio = self.out_size / self.in_size
 
-        modules = []
-        if hidden_dims is None:
-            hidden_dims = [32, 64, 128, 256, 512]
+        self.encoder = nn.Sequential(
+            nn.Conv2d(in_channels, 32, kernel_size=(3, 3), stride=(1, 1), padding=1),
+            nn.LeakyReLU(0.01),
+            nn.Conv2d(32, 64, kernel_size=(3, 3), stride=(2, 2), padding=1),
+            nn.LeakyReLU(0.01),
+            nn.Conv2d(64, 64, kernel_size=(3, 3), stride=(2, 2), padding=1),
+            nn.LeakyReLU(0.01),
+            nn.Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=1),
+            nn.Flatten(),
+        )
+        ytest = self.encoder(torch.randn((64, 1, self.time_window, self.in_size * 3)))
+        resized_height = 3
+        resized_width = int(ytest.shape[-1] / (64 * resized_height))
+        self.fc_mu = torch.nn.Linear(64 * resized_height * resized_width, self.latent_dim)
+        self.fc_var = torch.nn.Linear(64 * resized_height * resized_width, self.latent_dim)
 
-        # Build Encoder
-        for h_dim in hidden_dims:
-            modules.append(
-                nn.Sequential(
-                    nn.Conv2d(in_channels, out_channels=h_dim,
-                              kernel_size=3, stride=2, padding=1),
-                    nn.BatchNorm2d(h_dim),
-                    nn.LeakyReLU())
-            )
-            in_channels = h_dim
-
-        self.encoder = nn.Sequential(*modules)
-        self.fc_mu = nn.Linear(hidden_dims[-1]*4, latent_dim)
-        self.fc_var = nn.Linear(hidden_dims[-1]*4, latent_dim)
-
-        # Build Decoder
-        modules = []
-
-        self.decoder_input = nn.Linear(latent_dim, hidden_dims[-1]*4)
-
-        hidden_dims.reverse()
-
-        for i in range(len(hidden_dims) - 1):
-            modules.append(
-                nn.Sequential(
-                    nn.ConvTranspose2d(hidden_dims[i],
-                                       hidden_dims[i + 1],
-                                       kernel_size=3,
-                                       stride=2,
-                                       padding=1,
-                                       output_padding=1),
-                    nn.BatchNorm2d(hidden_dims[i + 1]),
-                    nn.LeakyReLU())
-            )
-
-        self.decoder = nn.Sequential(*modules)
-
-        self.final_layer = nn.Sequential(
-                            nn.ConvTranspose2d(hidden_dims[-1],
-                                               hidden_dims[-1],
-                                               kernel_size=3,
-                                               stride=2,
-                                               padding=1,
-                                               output_padding=1),
-                            nn.BatchNorm2d(hidden_dims[-1]),
-                            nn.LeakyReLU(),
-                            nn.Conv2d(hidden_dims[-1], out_channels=self.in_channels,
-                                      kernel_size=3, padding=1),
-                            nn.Tanh())
+        self.decoder = nn.Sequential(
+            # upsample the input's size to output's size
+            torch.nn.Linear(self.latent_dim, 64 * resized_height * resized_width * (1 + int(self.compress_ratio))),
+            Reshape(-1, 64, resized_height, resized_width * (1 + int(self.compress_ratio))),
+            nn.ConvTranspose2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=1),
+            nn.LeakyReLU(0.01),
+            nn.ConvTranspose2d(64, 64, kernel_size=(3, 3), stride=(2, 2), padding=1),
+            nn.LeakyReLU(0.01),
+            nn.ConvTranspose2d(64, 32, kernel_size=(3, 3), stride=(2, 2), padding=0),
+            nn.LeakyReLU(0.01),
+            nn.ConvTranspose2d(32, 1, kernel_size=(3, 3), stride=(1, 1), padding=0),
+            Trim(self.time_window, self.out_size * 3),
+        )
 
     def encode(self, input: Tensor) -> List[Tensor]:
-        """
-        Encodes the input by passing through the encoder network
-        and returns the latent codes.
-        :param input: (Tensor) Input tensor to encoder [N x C x H x W]
-        :return: (Tensor) List of latent codes
-        """
-        # print('\n shape: {}'.format(input.shape))
-        result = self.encoder(input)
-        result = torch.flatten(result, start_dim=1)
+        x = self.encoder(input)
 
-        # Split the result into mu and var components
-        # of the latent Gaussian distribution
-        mu = self.fc_mu(result)
-        log_var = self.fc_var(result)
+        mu = self.fc_mu(x)
+        log_var = self.fc_var(x)
 
         return [mu, log_var]
 
     def decode(self, z: Tensor) -> Tensor:
-        """
-        Maps the given latent codes
-        onto the image space.
-        :param z: (Tensor) [B x D]
-        :return: (Tensor) [B x C x H x W]
-        """
-        result = self.decoder_input(z)
-        # print('result z: {}'.format(result.shape))
-        result = result.view(-1, 512, 1, 1)
-        result = self.decoder(result)
-        result = self.final_layer(result)
-        # print('result final: {}'.format(result.shape))
-        return result
+        x_hat = self.decoder(z)
+        return x_hat
 
     def reparameterize(self, mu: Tensor, logvar: Tensor) -> Tensor:
-        """
-        Reparameterization trick to sample from N(mu, var) from
-        N(0,1).
-        :param mu: (Tensor) Mean of the latent Gaussian [B x D]
-        :param logvar: (Tensor) Standard deviation of the latent Gaussian [B x D]
-        :return: (Tensor) [B x D]
-        """
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return eps * std + mu
@@ -146,27 +118,29 @@ class VanillaVAE(BaseVAE):
     def forward(self, input: Tensor, **kwargs) -> List[Tensor]:
         mu, log_var = self.encode(input)
         z = self.reparameterize(mu, log_var)
-        return [self.decode(z), input, mu, log_var]
+        x_hat = self.decode(z)
+        A = kwargs['A']
+        return [x_hat, input, mu, log_var, A]
 
     def loss_function(self,
                       *args,
                       **kwargs) -> dict:
-        """
-        Computes the VAE loss function.
-        KL(N(\mu, \sigma), N(0, 1)) = \log \frac{1}{\sigma} + \frac{\sigma^2 + \mu^2}{2} - \frac{1}{2}
-        :param args:
-        :param kwargs:
-        :return:
-        """
         recons = args[0]
         input = args[1]
         mu = args[2]
         log_var = args[3]
+        A = args[4]
 
-        # print('recons.shape: {}, input.shape: {}'.format(recons.shape, input.shape))
+        # print('recons.shape: {}, input.shape: {}, A.shape: {}'.format(recons.shape, input.shape, A.shape))
 
         kld_weight = kwargs['M_N']  # Account for the minibatch samples from the dataset
-        recons_loss = F.mse_loss(recons, input)
+        b = recons.shape[0]
+        c = recons.shape[1]
+        h = recons.shape[2]
+        w = recons.shape[3]
+        recons = torch.matmul(recons.reshape(-1, h * w), A)
+        recons = torch.reshape(recons, [b, c, h, input.shape[-1]])
+        recons_loss = F.mse_loss(recons, input, reduction='sum')
 
         kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
 
@@ -198,7 +172,7 @@ class VanillaVAE(BaseVAE):
         :return: (Tensor) [B x C x H x W]
         """
 
-        return self.forward(x)[0]
+        return self.forward(x, **kwargs)[0]
 
 
 class MyVAE(BaseVAE):
@@ -313,7 +287,7 @@ class MyVAE(BaseVAE):
         kld_weight = kwargs['M_N']  # Account for the minibatch samples from the dataset
 
         recons = torch.matmul(recons, A)  # (b, n) x (n, m) -> (b, m)
-        recons_loss = F.mse_loss(recons, input, reduction='mean')
+        recons_loss = F.mse_loss(recons, input, reduction='sum')
 
         kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)
 

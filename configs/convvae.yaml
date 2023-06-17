@@ -1,20 +1,21 @@
 model_params:
-  name: 'VanillaVAE'
-  in_channels: 3
+  name: 'ConvoVAE'
+  in_channels: 1
   latent_dim: 20
-  in_size: 30
-  out_size: 51
+  in_size: 10
+  out_size: 17
+  time_window: 12
 
 # "/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/"
 # "~/Data/"
 data_params:
   data_path: "/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/"
-  train_batch_size: 1536
+  train_batch_size: 128
   val_batch_size:  128
   patch_size: 4
   num_workers: 4
-  conv_data: False
-
+  time_window: 12
+  conv_data: True
 
 exp_params:
   LR: 0.005
@@ -22,15 +23,15 @@ exp_params:
   scheduler_gamma: 0.95
   kld_weight: 0.00025
   manual_seed: 1265
-  m_measurement: 30
-  n_input: 51
-  conv_data: False
+  m_measurement: 10
+  n_input: 17
   time_window: 12
+  conv_data: True
 
 trainer_params:
   gpus: [0]
-  max_epochs: 51
+  max_epochs: 101
 
 logging_params:
   save_dir: "logs/"
-  name: "VanillaVAE"
+  name: "ConvoVAE"
