@@ -1,22 +1,26 @@
-import pickle as pkl
+import yaml
 import numpy as np
 from dataset import IMUDataset
 from torch.utils.data import DataLoader
-from torchvision import transforms
 
 
 if __name__ == '__main__':
     file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/'
-    n_input = 34
-    m_measurement = 10
-    time_window = 12
+    file_config = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/configs/convvae.yaml'
+    with open(file_config, 'r') as file:
+        try:
+            config = yaml.safe_load(file)
+        except yaml.YAMLError as exc:
+            print(exc)
+    h_in = config['model_params']['h_in']
+    h_out = config['model_params']['h_out']
+    tw = config['model_params']['tw']
+    batch_size = 64
 
-    train_dataset = IMUDataset(file_path, time_window=time_window,
-                                        conv_data=True, mode='train', transform=None)
-    test_dataset = IMUDataset(file_path, time_window=time_window,
-                                       conv_data=True, mode='test', transform=None)
-    train_data_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, drop_last=True)
-    test_data_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, drop_last=True)
+    train_dataset = IMUDataset(file_path, tw=tw, mode='train', transform=None)
+    test_dataset = IMUDataset(file_path, tw=tw, mode='test', transform=None)
+    train_data_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
+    test_data_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
 
     train_examples = enumerate(train_data_loader)
     test_examples = enumerate(test_data_loader)
@@ -29,17 +33,17 @@ if __name__ == '__main__':
     num_nan_train = 0
     num_nan_test = 0
     for e in train_examples:
-        batch_idx, (imu, imu_ori, imu_acc) = e
-        print('index: {}, imu.shape: {}, imu_ori.shape: {}, imu_acc.shape: {}'.format(
-            batch_idx, imu.shape, imu_ori.shape, imu_acc.shape))
+        batch_idx, (imu, gt) = e
+        print('index: {}, imu.shape: {}, gt.shape: {}'.format(
+            batch_idx, imu.shape, gt.shape))
         for j in range(imu.shape[0]):
             if np.isnan(imu[j]).any():
                 num_nan_train += 1
 
     for e in test_examples:
-        batch_idx, (imu, imu_ori, imu_acc) = e
-        print('index: {}, imu.shape: {}, imu_ori_test.shape: {}, imu_acc_test.shape: {}'.format(
-            batch_idx, imu.shape, imu_ori.shape, imu_acc.shape))
+        batch_idx, (imu, gt) = e
+        print('index: {}, imu.shape: {}, gt.shape: {}'.format(
+            batch_idx, imu.shape, gt.shape))
         for j in range(imu.shape[0]):
             if np.isnan(imu[j]).any():
                 num_nan_test += 1

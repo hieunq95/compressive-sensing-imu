@@ -1,10 +1,10 @@
 model_params:
-  name: 'ConvoVAE'
+  name: 'SMPLVAE'
   in_channels: 1
-  latent_dim: 20
-  h_in: &h_in 51  # input's size
-  h_out: &h_out 102  # output's size = 17 * 3 * 2
-  tw: &w 12  # time window
+  latent_dim: 32
+  h_in: &h_in 102
+  h_out: &h_out 72
+  tw: &tw 12
 
 data_params:
   data_path: "/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/"
@@ -12,17 +12,17 @@ data_params:
   val_batch_size:  128
   patch_size: 4
   num_workers: 4
-  tw: *w
+  tw: *tw
 
 exp_params:
-  LR: 0.005
+  LR: 0.001
   weight_decay: 0.0
   scheduler_gamma: 0.95
   kld_weight: 0.00025
   manual_seed: 1265
+  tw: *tw
   h_in: *h_in
   h_out: *h_out
-  tw: *w
 
 trainer_params: &trainer_params
   gpus: [0]
@@ -30,4 +30,4 @@ trainer_params: &trainer_params
 
 logging_params:
   save_dir: "/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/logs"
-  name: "ConvoVAE"
+  name: "SMPLVAE"

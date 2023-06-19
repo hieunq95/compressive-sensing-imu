@@ -8,6 +8,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+torch.manual_seed(1234)
 from pathlib import Path
 from vae import ConvoVAE, BaseVAE, MyVAE
 from dataset import CompSensDataset
@@ -27,19 +28,15 @@ class VAEXperiment(pl.LightningModule):
 
         self.model = vae_model
         self.params = params
-        self.m_measurement = self.params['m_measurement']
-        self.n_input = self.params['n_input']
-        self.time_window = self.params['time_window']
-        self.conv_data = self.params['conv_data']
+        self.h_in = self.params['h_in']
+        self.h_out = self.params['h_out']
+        self.tw = self.params['tw']
         self.curr_device = None
         self.hold_graph = False
-        if self.conv_data:
-            m = self.m_measurement * self.time_window * 3
-            n = self.n_input * self.time_window * 3
-            self.A = 1 / m * torch.randn(n, m)
-        else:
-            self.A = 1 / self.m_measurement * torch.randn(self.n_input, self.m_measurement)
-        self.noise_std = 0.01
+        self.m = self.h_in * self.tw
+        self.n = self.h_out * self.tw
+        self.A = 1 / self.m * torch.randn(self.n, self.m)
+        self.noise_std = 0.0
         self.compress_loss = []
         try:
             self.hold_graph = self.params['retain_first_backpass']
@@ -51,23 +48,17 @@ class VAEXperiment(pl.LightningModule):
 
     def training_step(self, batch, batch_idx, optimizer_idx=0):
         # TODO: Normalize data here instead of dataloader
-        imu, _, _ = batch  # (b, tw, n)
-        imu_data = imu.cpu().data  # (b, tw, 3 * nb_imus * 2)
+        imu, _ = batch  # [b, 1, h_out, tw]
+        imu_data = imu.cpu().data
         batch_size = self.trainer.datamodule.train_batch_size
 
         self.curr_device = imu.device
-        if self.conv_data:
-            m = self.m_measurement * self.time_window * 3
-            n = self.n_input * self.time_window * 3
-            noise = self.noise_std * torch.randn(batch_size, m)
-            imu_data = torch.reshape(imu_data, [batch_size, n])
-        else:
-            noise = self.noise_std * torch.randn(batch_size, self.m_measurement)
-        # (b * tw, n) x (n, m) + (b * tw, m) -> (b * tw, m)
-        y_batch = torch.matmul(self.normalize_data(imu_data, False), self.A) + noise
-        if self.conv_data:
-            y_batch = torch.reshape(y_batch, [batch_size, 1, self.time_window, self.m_measurement * 3])
-
+        noise = self.noise_std * torch.randn(batch_size, self.m)  # m compressed measurements
+        imu_data = torch.reshape(imu_data, [batch_size, self.n])  # n total measurements
+        # (b, n) x (n, m) + (b, m) -> (b, m)
+        y_batch = torch.matmul(imu_data, self.A) + noise
+        # reshape
+        y_batch = torch.reshape(y_batch, [batch_size, 1, self.h_in, self.tw])
         y_batch = y_batch.to(self.curr_device)
 
         results = self.forward(y_batch, A=self.A.to(self.curr_device))
@@ -81,28 +72,21 @@ class VAEXperiment(pl.LightningModule):
         return train_loss['loss']
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
-        imu, _, _ = batch  # (b, tw, n)
+        imu, gt = batch  # (b, tw, n)
         imu_data = imu.cpu().data
         batch_size = self.trainer.datamodule.val_batch_size
 
         self.curr_device = imu.device
-        if self.conv_data:
-            m = self.m_measurement * self.time_window * 3
-            n = self.n_input * self.time_window * 3
-            noise = self.noise_std * torch.randn(batch_size, m)
-            imu_data = torch.reshape(imu_data, [batch_size, n])
-        else:
-            noise = self.noise_std * torch.randn(batch_size, self.m_measurement)
-        # (b * tw, n) x (n, m) + (b * tw, m) -> (b * tw, m)
-        y_batch = torch.matmul(self.normalize_data(imu_data, False), self.A) + noise
-        if self.conv_data:
-            y_batch = torch.reshape(y_batch, [batch_size, 1, self.time_window, self.m_measurement * 3])
+        noise = self.noise_std * torch.randn(batch_size, self.m)
+        imu_data = torch.reshape(imu_data, [batch_size, self.n])
+        y_batch = torch.matmul(imu_data, self.A) + noise
 
+        y_batch = torch.reshape(y_batch, [batch_size, 1, self.h_in, self.tw])
         y_batch = y_batch.to(self.curr_device)
 
         results = self.forward(y_batch, A=self.A.to(self.curr_device))
         val_loss = self.model.loss_function(*results,
-                                            M_N=batch_size,  # real_img.shape[0]/ self.num_val_imgs,
+                                            M_N=1.0,  # real_img.shape[0]/ self.num_val_imgs,
                                             optimizer_idx=optimizer_idx,
                                             batch_idx=batch_idx)
 
@@ -132,39 +116,32 @@ class VAEXperiment(pl.LightningModule):
         test_samples_list = list(iter(self.trainer.datamodule.test_dataloader()))
         nb_test_samples = len(test_samples_list)
         random_idx = np.random.choice(nb_test_samples)
-        test_imu, _, _ = test_samples_list[random_idx]
-        test_imu = test_imu.to(self.curr_device)
+        test_imu, _ = test_samples_list[random_idx]  # [b, 1, h_out, tw]
         batch_size = self.trainer.datamodule.val_batch_size
 
-        # (b, n) x (n, m) -> (b, m)
-        test_imu = self.normalize_data(test_imu.cpu().data, False)
-        if self.conv_data:
-            m = self.m_measurement * self.time_window * 3
-            n = self.n_input * self.time_window * 3
-            noise = self.noise_std * torch.randn(batch_size, m)
-            test_imu = torch.reshape(test_imu, [batch_size, n])
-        else:
-            noise = self.noise_std * torch.randn(batch_size, self.m_measurement)
-        # (b * tw, n) x (n, m) + (b * tw, m) -> (b * tw, m)
-        y_batch = torch.matmul(self.normalize_data(test_imu, False), self.A) + noise
-        if self.conv_data:
-            y_batch = torch.reshape(y_batch, [batch_size, 1, self.time_window, self.m_measurement * 3])
+        noise = self.noise_std * torch.randn(batch_size, self.m)
+        test_imu = torch.reshape(test_imu, [batch_size, self.n])
+
+        y_batch = torch.matmul(test_imu, self.A) + noise
+        y_batch = torch.reshape(y_batch, [batch_size, 1, self.h_in, self.tw])
 
         y_batch = y_batch.to(self.curr_device)
 
-        # we have 17*2 = 34 virtual IMUs as we consider 17 IMUs for orientation and 17 IMUs for acceleration
         nb_imus = self.trainer.datamodule.train_dataloader().dataset.nb_imus * 2
-        sample_size = self.model.out_size
+        sample_size = self.model.h_out
         sampling_rate = self.trainer.datamodule.train_dataloader().dataset.sampling_rate
-        nb_samples = self.trainer.datamodule.val_batch_size
 
         recons = self.model.generate(y_batch, A=self.A)
-        if self.conv_data:
-            recons = np.reshape(recons.cpu().data, [nb_samples, self.time_window, sample_size, 3])
-            labels = np.reshape(test_imu.cpu().data, [nb_samples, self.time_window, sample_size, 3])
-        else:
-            recons = np.reshape(recons.cpu().data, [nb_samples, int(sample_size / 3), 3])
-            labels = np.reshape(test_imu.cpu().data, [nb_samples, int(sample_size / 3), 3])
+        recons = recons.cpu().data
+        # reshape  [b, 1, h_out, tw] -> [b * tw, h_out/3 , 3] original shape containing x, y, z axes
+        # transpose [b, 1, h_out, tw] -> [b, tw, h_out, 1]
+        recons = np.transpose(recons, (0, 3, 2, 1))
+        # reshape [b, tw, h_out, 1] -> [b * tw, h_out/3, 3]
+        recons = np.reshape(recons, [batch_size * self.tw, int(self.h_out / 3), 3])
+        # reshape as above
+        labels, _ = test_samples_list[random_idx]
+        labels = np.transpose(labels, (0, 3, 2, 1))
+        labels = np.reshape(labels, [batch_size * self.tw, int(self.h_out / 3), 3])
 
         cs_loss = self.get_l2_norm(recons, labels)
         self.compress_loss.append(cs_loss)
@@ -173,14 +150,11 @@ class VAEXperiment(pl.LightningModule):
                              f"{self.logger.name}_Epoch_{self.current_epoch}.png")
 
         figure, (ax1, ax2) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [2, 1]})
-        if self.conv_data:
-            recons_plot = np.reshape(recons, [1, nb_samples * self.time_window, nb_imus, 3])
-            labels_plot = np.reshape(labels, [1, nb_samples * self.time_window, nb_imus, 3])
-            ax1.plot(recons_plot[0, :120, 7, 1], linestyle='--', label='Recons')
-            ax1.plot(labels_plot[0, :120, 7, 1], linestyle='-', label='Labels')
-        else:
-            ax1.plot(recons[:, 7, 1], linestyle='--', label='Recons')
-            ax1.plot(labels[:, 7, 1], linestyle='-', label='Labels')
+        imu_position = 13  # left wrist
+        imu_axes = 0
+        ax1.plot(recons[:, imu_position, imu_axes], linestyle='--', label='Recons')
+        ax1.plot(labels[:, imu_position, imu_axes], linestyle='-', label='Labels')
+
         ax1.set_title('Real-time prediction')
         ax1.set_xlabel('Frame')
         ax1.set_ylabel('IMU reading')
