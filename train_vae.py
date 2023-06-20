@@ -11,6 +11,7 @@ import torch
 torch.manual_seed(1234)
 from pathlib import Path
 from vae import ConvoVAE, BaseVAE, MyVAE
+from imu_utils import matmul_A
 from dataset import CompSensDataset
 from torch import Tensor
 from torch import optim
@@ -49,16 +50,11 @@ class VAEXperiment(pl.LightningModule):
     def training_step(self, batch, batch_idx, optimizer_idx=0):
         # TODO: Normalize data here instead of dataloader
         imu, _ = batch  # [b, 1, h_out, tw]
-        imu_data = imu.cpu().data
         batch_size = self.trainer.datamodule.train_batch_size
 
         self.curr_device = imu.device
         noise = self.noise_std * torch.randn(batch_size, self.m)  # m compressed measurements
-        imu_data = torch.reshape(imu_data, [batch_size, self.n])  # n total measurements
-        # (b, n) x (n, m) + (b, m) -> (b, m)
-        y_batch = torch.matmul(imu_data, self.A) + noise
-        # reshape
-        y_batch = torch.reshape(y_batch, [batch_size, 1, self.h_in, self.tw])
+        y_batch = matmul_A(imu.cpu().data, self.A, noise)
         y_batch = y_batch.to(self.curr_device)
 
         results = self.forward(y_batch, A=self.A.to(self.curr_device))
@@ -73,15 +69,11 @@ class VAEXperiment(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
         imu, gt = batch  # (b, tw, n)
-        imu_data = imu.cpu().data
         batch_size = self.trainer.datamodule.val_batch_size
 
         self.curr_device = imu.device
-        noise = self.noise_std * torch.randn(batch_size, self.m)
-        imu_data = torch.reshape(imu_data, [batch_size, self.n])
-        y_batch = torch.matmul(imu_data, self.A) + noise
-
-        y_batch = torch.reshape(y_batch, [batch_size, 1, self.h_in, self.tw])
+        noise = self.noise_std * torch.randn(batch_size, self.m)  # m compressed measurements
+        y_batch = matmul_A(imu.cpu().data, self.A, noise)
         y_batch = y_batch.to(self.curr_device)
 
         results = self.forward(y_batch, A=self.A.to(self.curr_device))
@@ -120,16 +112,8 @@ class VAEXperiment(pl.LightningModule):
         batch_size = self.trainer.datamodule.val_batch_size
 
         noise = self.noise_std * torch.randn(batch_size, self.m)
-        test_imu = torch.reshape(test_imu, [batch_size, self.n])
-
-        y_batch = torch.matmul(test_imu, self.A) + noise
-        y_batch = torch.reshape(y_batch, [batch_size, 1, self.h_in, self.tw])
-
+        y_batch = matmul_A(test_imu.cpu().data, self.A, noise)
         y_batch = y_batch.to(self.curr_device)
-
-        nb_imus = self.trainer.datamodule.train_dataloader().dataset.nb_imus * 2
-        sample_size = self.model.h_out
-        sampling_rate = self.trainer.datamodule.train_dataloader().dataset.sampling_rate
 
         recons = self.model.generate(y_batch, A=self.A)
         recons = recons.cpu().data
@@ -207,6 +191,9 @@ class VAEXperiment(pl.LightningModule):
                 return optims, scheds
         except:
             return
+
+    def load_model(self, path):
+        self.model.load_state_dict(torch.load(path, map_location='cuda:0'), strict=False)
 
 
 def run(convo=False):

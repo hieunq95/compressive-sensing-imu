@@ -1,7 +1,7 @@
 model_params:
   name: 'ConvoVAE'
   in_channels: 1
-  latent_dim: 20
+  latent_dim: 72
   h_in: &h_in 51  # input's size
   h_out: &h_out 102  # output's size = 17 * 3 * 2
   tw: &w 12  # time window
@@ -15,7 +15,7 @@ data_params:
   tw: *w
 
 exp_params:
-  LR: 0.005
+  LR: 0.0005
   weight_decay: 0.0
   scheduler_gamma: 0.95
   kld_weight: 0.00025

@@ -8,11 +8,11 @@ import torch
 torch.manual_seed(1234)
 from torch.utils.data import DataLoader
 from torch.nn import functional as F
-from smpl_vae.smpl_vae import SMPLVAE
 from train_smpl_vae import SMPLexperiment
-from vae import ConvoVAE
+from vae import ConvoVAE, SMPLVAE
 from train_vae import VAEXperiment
 from dataset import IMUDataset
+from imu_utils import matmul_A, denormalize_acceleration
 
 
 def measure_loss(x, y):
@@ -136,40 +136,37 @@ def eval_model(conv_vae_ver=0, spml_vae_ver=0, ground_truth=False, animation=Fal
                                       config_conv_vae['model_params']['name'], 'version_{}'.format(conv_vae_ver),
                                       'checkpoints', 'last.ckpt')
     exp2 = VAEXperiment(conv_model, config_conv_vae['exp_params'])
-    conv_model = exp2.load_from_checkpoint(conv_trained_fname, vae_model=conv_model,
-                                           params=config_conv_vae['exp_params'])
-    conv_model.eval()
+    # conv_vae_model = exp2.load_from_checkpoint(conv_trained_fname, vae_model=conv_model,
+    #                                        params=config_conv_vae['exp_params'])
+    exp2.load_model(conv_trained_fname)
+    conv_vae_model = exp2.model
+    # conv_vae_model.eval()
 
     # test model with test dataset
-    batch_size = 1
+    batch_size = 5
     tw = config_conv_vae['model_params']['tw']
     file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/'
     test_dataset = IMUDataset(file_path, tw=tw, mode='test', transform=None)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
 
-    chosen_idx = 856
+    chosen_idx = 26
     test_len = len(list(iter(test_loader)))
     print('test_len: {}'.format(test_len))
     e = list(iter(test_loader))[chosen_idx]
 
     # e = next(iter(test_examples))
     (imu, gt) = e  # imu: (b, 1, 102, tw), gt: [b, 1, 72, tw]
-    y_hat = smpl_vae_model(imu, labels=gt)[0]
-    print('y_hat: {}'.format(y_hat.size()))
-    # # if ground_truth:
-    #     smpl_forward(imu_data, gt, smpl_vae_model, batch_size, time_window, animation)
 
     # test ConvoVAE model with reconstructed data
     A = exp2.A
     m = exp2.m
     n = exp2.n
-
-    imu_data_new = torch.reshape(imu, [batch_size, n])
     noise = exp2.noise_std * torch.randn(batch_size, m)
-    y_batch = torch.matmul(imu_data_new, A) + noise
-    y_batch = torch.reshape(y_batch, [batch_size, 1, config_conv_vae['exp_params']['h_in'], tw])
-    recons = conv_model(y_batch, A=A)[0]
-    print('recons: {}'.format(recons.size()))
+
+    y_batch = matmul_A(imu.cpu().data, A, noise)
+    recons = conv_vae_model.generate(y_batch, A=A)  # [b, 1, h_out, tw]
+    recons = denormalize_acceleration(recons)
+    imu = denormalize_acceleration(imu)
     if not ground_truth:
         smpl_forward(recons, gt, smpl_vae_model, body_model, batch_size, tw, animation)
         smpl_forward(imu, gt, smpl_vae_model, body_model, batch_size, tw, animation)
@@ -185,4 +182,4 @@ def eval_model(conv_vae_ver=0, spml_vae_ver=0, ground_truth=False, animation=Fal
 
 
 if __name__ == '__main__':
-    eval_model(conv_vae_ver=116, spml_vae_ver=4, ground_truth=False, animation=False)
+    eval_model(conv_vae_ver=128, spml_vae_ver=5, ground_truth=False, animation=True)

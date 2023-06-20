@@ -5,6 +5,7 @@ from torch import nn
 from torch.nn import functional as F
 from abc import abstractmethod
 from typing import List, Any
+from imu_utils import transpose_transform
 
 
 class Reshape(nn.Module):
@@ -139,13 +140,7 @@ class ConvoVAE(BaseVAE):
         # print('recons.shape: {}, input.shape: {}, A.shape: {}'.format(recons.shape, input.shape, A.shape))
 
         kld_weight = kwargs['M_N']  # Account for the minibatch samples from the dataset
-        b = recons.shape[0]
-        c = recons.shape[1]
-        h = recons.shape[2]
-        w = recons.shape[3]
-
-        recons = torch.matmul(recons.reshape(-1, h * w), A)
-        recons = torch.reshape(recons, [b, c, input.shape[2], w])
+        recons = transpose_transform(recons, input, A)
         recons_loss = F.mse_loss(recons, input, reduction='sum')
 
         kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)

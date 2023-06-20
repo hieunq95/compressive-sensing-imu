@@ -31,8 +31,8 @@ class IMUDataset(Dataset):
                         ]
         elif self.mode == 'validate':
             subjects = [
-                        's_01',
-                        's_03',
+                        # 's_01',
+                        # 's_03',
                         's_07',
             ]
         else:
@@ -143,7 +143,7 @@ class CompSensDataset(LightningDataModule):
             self.train_dataset,
             batch_size=self.train_batch_size,
             num_workers=self.num_workers,
-            shuffle=True,
+            shuffle=False,
             drop_last=True,
             pin_memory=self.pin_memory,
         )
@@ -153,7 +153,7 @@ class CompSensDataset(LightningDataModule):
             self.validate_dataset,
             batch_size=self.val_batch_size,
             num_workers=self.num_workers,
-            shuffle=True,
+            shuffle=False,
             drop_last=True,
             pin_memory=self.pin_memory,
         )
@@ -167,6 +167,7 @@ class CompSensDataset(LightningDataModule):
             drop_last=True,
             pin_memory=self.pin_memory,
         )
+
 
 class SMPLightningData(LightningDataModule):
     def __init__(
