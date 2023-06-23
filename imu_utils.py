@@ -1,6 +1,17 @@
+import os
+from pathlib import Path
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import threading
 import numpy as np
 import cv2
 import torch
+
+
+def get_l2_norm(x, y):
+    l2_norm_array = np.power(np.subtract(x, y), 2)
+    return np.mean(l2_norm_array)
 
 
 def rot_matrix_to_aa(data):
@@ -17,22 +28,35 @@ def rot_matrix_to_aa(data):
     return np.reshape(data_c, [seq_length, n_joints*3])
 
 
-def matmul_A(x, A, noise):
-    """Calculate x*A + noise -> y  from h_out -> h_in for input"""
+def matmul_A(x, A, noise=None):
+    """Calculate x*A + noise -> y  from h_out -> h_in for input.
+    :param  x (b, 1, h_out, w_out)
+    :param  A (h_out * w_out, h_in * w_in)
+    :param  noise (b, 1, h_in, w_in)
+    :return - y (b, 1, h_in, w_in)
+
+    """
     b = x.shape[0]
     h_out = x.shape[2]
-    tw = x.shape[3]
-    n = h_out * tw
-    # [b, 1, h_out, tw] -> [b, tw, h_out, 1]
-    x = x.permute(0, 3, 2, 1)
-    x = torch.reshape(x, [b, n])  # n total measurements
-    # (b, n) x (n, m) + (b, m) -> (b, m)
-    y = torch.matmul(x, A) + noise
-    h_in = int(y.shape[1] / tw)
-    # (b, m) -> (b, tw, h_in, 1)
-    y = torch.reshape(y, [b, tw * h_in])
-    y = torch.reshape(y, [b, tw, h_in, 1])
-    y = y.permute(0, 3, 2, 1)
+    w_out = x.shape[3]
+    if noise is not None:
+        h_in = noise.shape[2]
+        w_in = noise.shape[3]
+    else:
+        w_in = 6
+        h_in = A.shape[1] // w_in
+
+    n = h_out * w_out
+    m = h_in * w_in
+    x_flat = torch.reshape(x, [b, n])
+    # (b, n) * (n, m) -> (b, m)
+    y = torch.matmul(x_flat, A)
+    # (b, m) + (b, m) -> (b, m)
+    if noise is not None:
+        noise_flat = torch.reshape(noise, [b, m])
+        y = torch.add(y, noise_flat)
+    # (b, m) -> (b, 1, h_in, w_win)
+    y = torch.reshape(y, [b, 1, h_in, w_in])
 
     return y
 
@@ -68,3 +92,36 @@ def denormalize_acceleration(x):
     y = torch.from_numpy(x_new)
 
     return y
+
+
+def save_fig(filename):
+    plt.savefig(filename)
+    plt.close()
+
+
+def plot_reconstruction_data(x, y, dir):
+    # /home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/logs/ConvoVAE/version_37
+    dir_save = os.path.join(dir, 'Evaluation')
+    Path(dir_save).mkdir(exist_ok=True, parents=True)
+    b = x.shape[0]  # [b, 1, h_out]
+
+    # plot using matplotlib
+    num_images = b
+    for i in range(num_images):
+        figure, (ax1, ax2) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]})
+        ax1.plot(x[i, :], linestyle='--', label='Recons')
+        ax1.plot(y[i, :], linestyle='-', label='Labels')
+        print('Measurement loss: {}'.format(get_l2_norm(x, y)))
+
+        ax1.set_title('Real-time prediction')
+        ax1.set_xlabel('Frame')
+        ax1.set_ylabel('IMU reading')
+        ax1.grid(linestyle='--')
+
+        ax1.legend()
+        figure.tight_layout()
+
+        fname = os.path.join(dir_save, 'Evaluation_{}.png'.format(i))
+
+        save_thread = threading.Thread(target=save_fig, args=(fname,))
+        save_thread.start()

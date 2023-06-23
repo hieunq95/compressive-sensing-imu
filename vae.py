@@ -5,7 +5,7 @@ from torch import nn
 from torch.nn import functional as F
 from abc import abstractmethod
 from typing import List, Any
-from imu_utils import transpose_transform
+from imu_utils import matmul_A
 
 
 class Reshape(nn.Module):
@@ -59,14 +59,14 @@ class ConvoVAE(BaseVAE):
                  latent_dim: int,
                  h_in: int,
                  h_out: int,
-                 tw: int,
                  **kwargs) -> None:
         super(ConvoVAE, self).__init__()
 
         self.latent_dim = latent_dim
-        self.h_in = h_in
-        self.h_out = h_out
-        self.tw = tw
+        self.w_in = 12
+        self.h_in = h_in // self.w_in
+        self.w_out = 12
+        self.h_out = h_out // self.w_out
         h_dims = [32, 64]
         # [b, 1, h_in, tw]
         self.encoder = nn.Sequential(
@@ -80,27 +80,26 @@ class ConvoVAE(BaseVAE):
             nn.Conv2d(h_dims[1], h_dims[1], kernel_size=(3, 3), stride=(1, 1), padding=1),
             nn.Flatten(),
         )
-        ytest = self.encoder(torch.randn((100, 1, self.h_in, self.tw)))
+        ytest = self.encoder(torch.randn((100, 1, self.h_in, self.w_in)))
         print('ytest: {}'.format(ytest.size()))
-        resized_h_in = 13  # this value should be proportional to the h_in value, e.g., resized_h_in > resized_tw
-        resized_tw = int(ytest.shape[-1] / (h_dims[1] * resized_h_in))
-        self.compress_ratio = 1 + int(self.h_in / resized_h_in)
+        resized_h_in = 3
+        resized_w_in = 3
 
-        self.fc_mu = torch.nn.Linear(h_dims[1] * resized_h_in * resized_tw, self.latent_dim)
-        self.fc_var = torch.nn.Linear(h_dims[1] * resized_h_in * resized_tw, self.latent_dim)
+        self.fc_mu = torch.nn.Linear(h_dims[1] * resized_h_in * resized_w_in, self.latent_dim)
+        self.fc_var = torch.nn.Linear(h_dims[1] * resized_h_in * resized_w_in, self.latent_dim)
 
         self.decoder = nn.Sequential(
             # upsample the input's size to output's size
-            torch.nn.Linear(self.latent_dim, h_dims[1] * resized_h_in * resized_tw * self.compress_ratio),
-            Reshape(-1, h_dims[1], resized_h_in * self.compress_ratio, resized_tw),
+            torch.nn.Linear(self.latent_dim, h_dims[1] * resized_h_in * resized_w_in),
+            Reshape(-1, h_dims[1], resized_h_in, resized_w_in),
             nn.ConvTranspose2d(h_dims[1], h_dims[1], kernel_size=(3, 3), stride=(1, 1), padding=1),
             nn.LeakyReLU(0.01),
-            nn.ConvTranspose2d(h_dims[1], h_dims[1], kernel_size=(3, 3), stride=(2, 2), padding=1),
+            nn.ConvTranspose2d(h_dims[1], h_dims[1], kernel_size=(3, 3), stride=(2, 2), padding=0),
             nn.LeakyReLU(0.01),
             nn.ConvTranspose2d(h_dims[1], h_dims[0], kernel_size=(3, 3), stride=(2, 2), padding=0),
             nn.LeakyReLU(0.01),
             nn.ConvTranspose2d(h_dims[0], 1, kernel_size=(3, 3), stride=(1, 1), padding=0),
-            Trim(self.h_out, self.tw),
+            Trim(self.h_out, self.w_out),
         )
 
     def encode(self, input: Tensor) -> List[Tensor]:
@@ -131,8 +130,8 @@ class ConvoVAE(BaseVAE):
     def loss_function(self,
                       *args,
                       **kwargs) -> dict:
-        recons = args[0]
-        input = args[1]
+        recons = args[0]  # (b, 1, h_out, w_out)
+        labels = args[1]
         mu = args[2]
         log_var = args[3]
         A = args[4]
@@ -140,8 +139,8 @@ class ConvoVAE(BaseVAE):
         # print('recons.shape: {}, input.shape: {}, A.shape: {}'.format(recons.shape, input.shape, A.shape))
 
         kld_weight = kwargs['M_N']  # Account for the minibatch samples from the dataset
-        recons = transpose_transform(recons, input, A)
-        recons_loss = F.mse_loss(recons, input, reduction='sum')
+        recons = matmul_A(recons, A, noise=None)
+        recons_loss = F.mse_loss(recons, labels, reduction='mean')
 
         kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
 
@@ -169,44 +168,39 @@ class SMPLVAE(BaseVAE):
                  latent_dim: int,
                  h_in: int,
                  h_out: int,
-                 tw: int,
                  **kwargs) -> None:
         super(SMPLVAE, self).__init__()
 
         self.latent_dim = latent_dim
+        self.in_channels = in_channels
         self.h_in = h_in
         self.h_out = h_out
-        self.tw = tw
+        self.h_dim = 512
 
-        self.encoder = nn.Sequential(
+        # [b, 1, 204] -> encoder(x)
+        encoder_layers = [
             nn.Dropout(0.2),
-            nn.Conv2d(in_channels, 64, kernel_size=(3, 3), stride=(1, 1), padding=1),
-            nn.LeakyReLU(0.01),
-            nn.Conv2d(64, 128, kernel_size=(3, 3), stride=(2, 2), padding=1),
-            nn.LeakyReLU(0.01),
-            nn.Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=1),
-            nn.Flatten(),
-        )
-        ytest = self.encoder(torch.randn((100, 1, self.h_in, self.tw)))  # (61, 1, 6, 102) -> encoder(x)
-        print('ytest.size(): {}'.format(ytest.size()))
-        resized_h_in = 34  # this value should be proportional to the h_in value, e.g., resized_h_in > resized_tw
-        resized_tw = int(ytest.shape[-1] / (128 * resized_h_in))
-        self.compress_ratio = 1 + int(self.h_in / resized_h_in)  # downsampling via Conv2d layers
+            nn.Linear(self.h_in, self.h_dim),
+            nn.ReLU(),
+            nn.Linear(self.h_dim, self.h_dim),
+            nn.ReLU(),
+        ]
 
-        self.fc_mu = torch.nn.Linear(128 * resized_h_in * resized_tw, self.latent_dim)
-        self.fc_var = torch.nn.Linear(128 * resized_h_in * resized_tw, self.latent_dim)
+        self.encoder = nn.Sequential(*encoder_layers)  # x -> encoder
+        self.fc_mu = nn.Linear(self.h_dim, self.latent_dim)  # encoder -> fc_mu
+        self.fc_var = nn.Linear(self.h_dim, self.latent_dim)  # encoder -> fc_var
 
-        self.decoder = nn.Sequential(
-            # upsample the input's size to output's size (*2)
-            torch.nn.Linear(self.latent_dim, 128 * resized_h_in * resized_tw * self.compress_ratio),
-            Reshape(-1, 128, resized_h_in * self.compress_ratio, resized_tw),
-            nn.ConvTranspose2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=1),
-            nn.LeakyReLU(0.01),
-            nn.ConvTranspose2d(128, 64, kernel_size=(3, 3), stride=(2, 2), padding=0),
-            nn.LeakyReLU(0.01),
-            nn.ConvTranspose2d(64, 1, kernel_size=(3, 3), stride=(1, 1), padding=0),
-            Trim(self.h_out, self.tw),
-        )
+        # Define the decoder layers as a list of tuples, where each tuple contains the
+        # layer type and its corresponding parameters.
+        self.decoder_input = nn.Linear(self.latent_dim, self.h_dim)  # fc_mu, fc_var -> decoder_input
+        decoder_layers = [
+            nn.Linear(self.h_dim, self.h_dim),
+            nn.ReLU(),
+            nn.Linear(self.h_dim, self.h_out),
+            # nn.Tanh()
+        ]
+
+        self.decoder = nn.Sequential(*decoder_layers)  # decoder_input -> decoder -> x_hat
 
     def encode(self, input: Tensor) -> List[Tensor]:
         x = self.encoder(input)
@@ -216,7 +210,8 @@ class SMPLVAE(BaseVAE):
         return [mu, log_var]
 
     def decode(self, z: Tensor) -> Tensor:
-        x_hat = self.decoder(z)
+        x_hat = self.decoder_input(z)
+        x_hat = self.decoder(x_hat)
         return x_hat
 
     def reparameterize(self, mu: Tensor, logvar: Tensor) -> Tensor:
@@ -268,22 +263,24 @@ class MyVAE(BaseVAE):
     def __init__(self,
                  in_channels: int,
                  latent_dim: int,
-                 in_size: int,
-                 out_size: int,
-                 hidden_dims: List = None,
+                 h_in: int,
+                 h_out: int,
                  **kwargs) -> None:
         super(MyVAE, self).__init__()
 
         self.latent_dim = latent_dim
         self.in_channels = in_channels
-        self.in_size = in_size
-        self.out_size = out_size
-        self.h_dim = 128
+        self.h_in = h_in
+        self.h_out = h_out
+        self.h_dim = 512
 
         # Define the encoder layers as a list of tuples, where each tuple contains the
         # layer type and its corresponding parameters.
         encoder_layers = [
-            nn.Linear(self.in_size, self.h_dim),
+            nn.Dropout(0.2),
+            nn.Linear(self.h_in, self.h_dim),
+            nn.ReLU(),
+            nn.Linear(self.h_dim, self.h_dim),
             nn.ReLU(),
         ]
 
@@ -295,9 +292,11 @@ class MyVAE(BaseVAE):
         # layer type and its corresponding parameters.
         self.decoder_input = nn.Linear(self.latent_dim, self.h_dim)  # fc_mu, fc_var -> decoder_input
         decoder_layers = [
+            nn.Linear(self.h_dim, self.h_dim),
             nn.ReLU(),
-            nn.Linear(self.h_dim, self.out_size),
-            # nn.Sigmoid()
+            nn.Dropout(0.2),
+            nn.Linear(self.h_dim, self.h_out),
+            # nn.Tanh()
         ]
 
         self.decoder = nn.Sequential(*decoder_layers)  # decoder_input -> decoder -> x_hat
@@ -310,7 +309,7 @@ class MyVAE(BaseVAE):
         :return: (Tensor) List of latent codes
         """
         result = self.encoder(input)
-        result = torch.flatten(result, start_dim=1)
+        # result = torch.flatten(result, start_dim=1)
 
         # Split the result into mu and var components
         # of the latent Gaussian distribution
@@ -374,9 +373,9 @@ class MyVAE(BaseVAE):
         A = args[4]  # (n, m)
 
         kld_weight = kwargs['M_N']  # Account for the minibatch samples from the dataset
-        print('recons: {}, input: {}, A: {}'.format(recons.size(), input.size(), A.size()))
+        # print('recons: {}, input: {}, A: {}'.format(recons.size(), input.size(), A.size()))
         recons = torch.matmul(recons, A)  # (b, n) x (n, m) -> (b, m)
-        recons_loss = F.mse_loss(recons, input, reduction='sum')
+        recons_loss = F.mse_loss(recons, input, reduction='mean')
 
         kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)
 

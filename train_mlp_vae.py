@@ -29,17 +29,12 @@ class VAEXperiment(pl.LightningModule):
         self.model = vae_model
         self.params = params
         # h_in * w_in = 102
-        self.h_in = 17
-        self.w_in = self.params['h_in'] // self.h_in  # 6
-        # h_out * w_out = 204
-        self.h_out = 17
-        self.w_out = self.params['h_out'] // self.h_out  # 12
+        self.h_in = self.params['h_in']
+        self.h_out = self.params['h_out']
         self.curr_device = None
         self.hold_graph = False
-        self.m = self.h_in * self.w_in
-        self.n = self.h_out * self.w_out
-        self.A = 1 / self.m * torch.randn((self.n, self.m))
-        self.noise_std = 0.0
+        self.A = torch.normal(mean=0, std=1.0/self.h_in, size=[self.h_out, self.h_in])
+        self.noise_std = 0.001
         self.compress_loss = []
         try:
             self.hold_graph = self.params['retain_first_backpass']
@@ -55,8 +50,11 @@ class VAEXperiment(pl.LightningModule):
         batch_size = self.trainer.datamodule.train_batch_size
 
         self.curr_device = imu.device
-        noise = self.noise_std * torch.randn((batch_size, 1, self.h_in, self.w_in))  # m compressed measurements
-        y_batch = matmul_A(imu.cpu().data, self.A, noise)
+        noise = self.noise_std * torch.randn((batch_size, self.h_in))  # m compressed measurements
+        imu_flat = torch.reshape(imu, [batch_size, self.h_out])
+        # (b, h_out) * (h_out, h_in) + (b, h_in) -> (b, h_in)
+        y_batch = torch.matmul(imu_flat, self.A.to(self.curr_device))
+        y_batch = torch.add(y_batch, noise.to(self.curr_device))
         y_batch = y_batch.to(self.curr_device)
 
         results = self.forward(y_batch, A=self.A.to(self.curr_device))
@@ -74,8 +72,11 @@ class VAEXperiment(pl.LightningModule):
         batch_size = self.trainer.datamodule.val_batch_size
 
         self.curr_device = imu.device
-        noise = self.noise_std * torch.randn((batch_size, 1, self.h_in, self.w_in))
-        y_batch = matmul_A(imu.cpu().data, self.A, noise)
+        noise = self.noise_std * torch.randn((batch_size, self.h_in))  # m compressed measurements
+        imu_flat = torch.reshape(imu, [batch_size, self.h_out])
+        # (b, h_out) * (h_out, h_in) + (b, h_in) -> (b, h_in)
+        y_batch = torch.matmul(imu_flat, self.A.to(self.curr_device))
+        y_batch = torch.add(y_batch, noise.to(self.curr_device))
         y_batch = y_batch.to(self.curr_device)
 
         results = self.forward(y_batch, A=self.A.to(self.curr_device))
@@ -89,9 +90,9 @@ class VAEXperiment(pl.LightningModule):
     def on_validation_end(self) -> None:
         self.sample_data()
 
-    def get_l2_norm(self, x, y):
-        l2_norm_array = np.power(np.subtract(x, y), 2)
-        return torch.mean(l2_norm_array)
+    def get_mse(self, x, y):
+        mse = ((x - y)**2).mean(axis=None)  # # (b, h_out)
+        return mse
 
     def save_fig(self, filename):
         plt.savefig(filename)
@@ -113,25 +114,26 @@ class VAEXperiment(pl.LightningModule):
         test_imu, _ = test_samples_list[random_idx]  # [b, 1, h_out, tw]
         batch_size = self.trainer.datamodule.val_batch_size
 
-        noise = self.noise_std * torch.randn((batch_size, 1, self.h_in, self.w_in))
-        y_batch = matmul_A(test_imu.cpu().data, self.A, noise)
+        noise = self.noise_std * torch.randn((batch_size, self.h_in))  # m compressed measurements
+        test_imu = torch.reshape(test_imu, [batch_size, self.h_out])
+        # (b, h_out) * (h_out, h_in) + (b, h_in) -> (b, h_in)
+        y_batch = torch.matmul(test_imu.to(self.curr_device), self.A.to(self.curr_device))
+        y_batch = torch.add(y_batch, noise.to(self.curr_device))
         y_batch = y_batch.to(self.curr_device)
 
-        recons = self.model.generate(y_batch, A=self.A)
-        recons = recons.cpu().data  # (b, 1, h_out, w_out)
-        labels = test_imu.cpu().data  # (b, 1, h_out, w_out)
+        recons = self.model.generate(y_batch, A=self.A.to(self.curr_device))
+        recons = recons.cpu().data
+        labels = test_imu.cpu().data
 
-        cs_loss = self.get_l2_norm(recons, labels)
+        cs_loss = self.get_mse(recons, labels)
         self.compress_loss.append(cs_loss)
 
         fname = os.path.join(self.logger.log_dir, "Reconstructions",
                              f"{self.logger.name}_Epoch_{self.current_epoch}.png")
 
         figure, (ax1, ax2) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [2, 1]})
-        recons_plot = np.reshape(recons, [batch_size, self.h_out * self.w_out])
-        labels_plot = np.reshape(labels, [batch_size, self.h_out * self.w_out])
-        ax1.plot(recons_plot[0, :], linestyle='--', label='Recons')
-        ax1.plot(labels_plot[0, :], linestyle='-', label='Labels')
+        ax1.plot(recons[0, :], linestyle='--', label='Recons')
+        ax1.plot(labels[0, :], linestyle='-', label='Labels')
 
         ax1.set_title('Real-time prediction')
         ax1.set_xlabel('Frame')
@@ -190,9 +192,9 @@ class VAEXperiment(pl.LightningModule):
         self.model.load_state_dict(torch.load(path, map_location='cuda:0'), strict=False)
 
 
-def run(convo=False):
+def run():
     parser = argparse.ArgumentParser(description='Generic runner for VAE models')
-    config_file = 'configs/convvae.yaml' if convo else 'configs/vae.yaml'
+    config_file = 'configs/vae.yaml'
     parser.add_argument('--config', '-c',
                         dest="filename",
                         metavar='FILE',
@@ -208,7 +210,7 @@ def run(convo=False):
 
     tb_logger = TensorBoardLogger(save_dir=config['logging_params']['save_dir'],
                                   name=config['model_params']['name'],)
-    vae_models = {'ConvoVAE': ConvoVAE} if convo else {'VanillaVAE': MyVAE}
+    vae_models = {'VanillaVAE': MyVAE}
     model = vae_models[config['model_params']['name']](**config['model_params'])
     print(model)
     experiment = VAEXperiment(model, config['exp_params'])
@@ -231,4 +233,4 @@ def run(convo=False):
 
 
 if __name__ == '__main__':
-    run(convo=True)
+    run()

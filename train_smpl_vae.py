@@ -10,7 +10,7 @@ import numpy as np
 import torch
 torch.manual_seed(1234)
 from pathlib import Path
-from vae import BaseVAE, SMPLVAE
+from vae import BaseVAE, SMPLVAE, MyVAE
 from dataset import SMPLightningData
 from torch import Tensor
 from torch import optim
@@ -28,7 +28,6 @@ class SMPLexperiment(pl.LightningModule):
 
         self.model = vae_model
         self.params = params
-        self.tw = self.params['tw']
         self.h_in = self.params['h_in']
         self.h_out = self.params['h_out']
         self.curr_device = None
@@ -43,7 +42,7 @@ class SMPLexperiment(pl.LightningModule):
         return self.model(input, **kwargs)
 
     def training_step(self, batch, batch_idx, optimizer_idx=0):
-        imu, gt = batch  # (b, 1, h_in, tw), (b, 1, h_out, tw)
+        imu, gt = batch  # (b, 1, h_in), (b, 1, h_out)
         self.curr_device = imu.device
         results = self.forward(imu, labels=gt)
         train_loss = self.model.loss_function(*results,
@@ -56,11 +55,11 @@ class SMPLexperiment(pl.LightningModule):
         return train_loss['loss']
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
-        imu, gt = batch  # (b, tw, n)
+        imu, gt = batch
         self.curr_device = imu.device
         results = self.forward(imu, labels=gt)
         val_loss = self.model.loss_function(*results,
-                                            M_N=1.0,  # real_img.shape[0]/ self.num_val_imgs,
+                                            M_N=self.params['kld_weight'],  # real_img.shape[0]/ self.num_val_imgs,
                                             optimizer_idx=optimizer_idx,
                                             batch_idx=batch_idx)
 
@@ -69,9 +68,9 @@ class SMPLexperiment(pl.LightningModule):
     def on_validation_end(self) -> None:
         self.sample_data()
 
-    def get_l2_norm(self, x, y):
-        l2_norm_array = np.power(np.subtract(x, y), 2)
-        return torch.mean(l2_norm_array)
+    def get_mse(self, x, y):
+        mse = ((x - y) ** 2).mean(axis=None)  # # (b, h_out)
+        return mse
 
     def save_fig(self, filename):
         plt.savefig(filename)
@@ -82,27 +81,24 @@ class SMPLexperiment(pl.LightningModule):
         test_samples_list = list(iter(self.trainer.datamodule.test_dataloader()))
         nb_test_samples = len(test_samples_list)
         random_idx = np.random.choice(nb_test_samples)
-        test_imu, test_gt = test_samples_list[random_idx]
-        test_imu = test_imu.to(self.curr_device)
-        test_gt = test_gt.to(self.curr_device)
+        imu, gt = test_samples_list[random_idx]
+        imu = imu.to(self.curr_device)
+        gt = gt.to(self.curr_device)
         b = self.trainer.datamodule.val_batch_size
 
-        recons = self.model.generate(test_imu, labels=test_gt)
-        cs_loss = self.get_l2_norm(recons.cpu().data, test_gt.cpu().data)
+        recons = self.model.generate(imu, labels=gt)
+        cs_loss = self.get_mse(recons.cpu().data, gt.cpu().data)
         self.compress_loss.append(cs_loss)
 
         fname = os.path.join(self.logger.log_dir, "Reconstructions",
                              f"{self.logger.name}_Epoch_{self.current_epoch}.png")
 
         figure, (ax1, ax2) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [2, 1]})
-        # reshape  [b, 1, 72, tw] -> [b * tw, 72]
-        # transpose [b, 1, 72, tw] -> [b, tw, 72, 1]
-        recons = np.transpose(recons.cpu().data, (0, 3, 2, 1))
-        # reshape [b, tw, 72, 1] -> [b * tw, 72, 1]
-        recons = np.reshape(recons, [b * self.tw, self.h_out, 1])
-        labels = np.reshape(test_gt.cpu().data, [b * self.tw, self.h_out, 1])
-        ax1.plot(recons[:, 13, 0], linestyle='--', label='Recons')
-        ax1.plot(labels[:, 13, 0], linestyle='-', label='Labels')
+        # reshape  [b, 1, 9, 8] -> [b, 72]
+        recons = np.reshape(recons.cpu().data, [b, 72])
+        labels = np.reshape(gt.cpu().data, [b, 72])
+        ax1.plot(recons[0, :], linestyle='--', label='Recons')
+        ax1.plot(labels[0, :], linestyle='-', label='Labels')
         ax1.set_title('Real-time prediction')
         ax1.set_xlabel('Frame')
         ax1.set_ylabel('SMPL pose')

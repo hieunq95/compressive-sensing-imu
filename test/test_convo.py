@@ -1,25 +1,8 @@
 import torch
+import yaml
 from torch import nn
-from torch.nn import functional as F
-
-
-class Reshape(nn.Module):
-    def __init__(self, *args):
-        super().__init__()
-        self.shape = args
-
-    def forward(self, x):
-        return x.view(self.shape)
-
-
-class Trim(nn.Module):
-    def __init__(self, *args):
-        super().__init__()
-        self.height = args[0]
-        self.width = args[1]
-
-    def forward(self, x):
-        return x[:, :, :self.height, :self.width]
+from vae import Reshape, Trim, SMPLVAE, ConvoVAE
+from train_vae import VAEXperiment
 
 
 def upsample_test():
@@ -88,6 +71,46 @@ def test_nn(x):
     print('x_hat: {}'.format(x_hat.size()))
 
 
+def test_smpl_vae():
+    fname = "/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/configs/smplvae.yaml"
+    with open(fname, "r") as stream:
+        try:
+            config = yaml.safe_load(stream)
+        except yaml.YAMLError as exc:
+            print(exc)
+
+    x = torch.randn((64, 1, 17, 6))
+    labels = torch.randn((61, 1, 9, 8))
+    model = SMPLVAE(config['model_params']['in_channels'], config['model_params']['latent_dim'],
+                    config['model_params']['h_in'], config['model_params']['h_out'])
+    print(model)
+    y = model(x, labels=labels)[0]
+    print('x: {}, y: {}'.format(x.size(), y.size()))
+
+
+def test_conv_vae():
+    fname = "/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/configs/convvae.yaml"
+    with open(fname, "r") as stream:
+        try:
+            config = yaml.safe_load(stream)
+        except yaml.YAMLError as exc:
+            print(exc)
+
+    h_in = config['model_params']['h_in'] // 6
+    w_in = config['model_params']['h_in'] // h_in
+    x = torch.randn((64, 1, h_in, w_in))
+
+    model = ConvoVAE(config['model_params']['in_channels'], config['model_params']['latent_dim'],
+                    config['model_params']['h_in'], config['model_params']['h_out'])
+    print(model)
+    exp = VAEXperiment(model, config['exp_params'])
+    A = exp.A
+    y = model(x, A=A)[0]
+    print('x: {}, y: {}'.format(x.size(), y.size()))
+
+
 if __name__ == '__main__':
-    x = torch.randn((64, 1, 12, 36))
-    test_nn(x)
+    # x = torch.randn((64, 1, 12, 36))
+    # test_nn(x)
+    # test_smpl_vae()
+    test_conv_vae()

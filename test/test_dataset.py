@@ -12,13 +12,12 @@ if __name__ == '__main__':
             config = yaml.safe_load(file)
         except yaml.YAMLError as exc:
             print(exc)
-    h_in = config['model_params']['h_in']
-    h_out = config['model_params']['h_out']
-    tw = config['model_params']['tw']
+    h_in = config['model_params']['h_in']  # m * 6
+    h_out = config['model_params']['h_out']  # 102 = 17 * 6
     batch_size = 64
 
-    train_dataset = IMUDataset(file_path, tw=tw, mode='train', transform=None)
-    test_dataset = IMUDataset(file_path, tw=tw, mode='test', transform=None)
+    train_dataset = IMUDataset(file_path, mode='train', transform=None)
+    test_dataset = IMUDataset(file_path, mode='test', transform=None)
     train_data_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
     test_data_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
 
