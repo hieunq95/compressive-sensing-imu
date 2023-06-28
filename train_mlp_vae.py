@@ -8,7 +8,6 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-torch.manual_seed(1234)
 from pathlib import Path
 from vae import ConvoVAE, BaseVAE, MyVAE
 from imu_utils import matmul_A
@@ -33,8 +32,10 @@ class VAEXperiment(pl.LightningModule):
         self.h_out = self.params['h_out']
         self.curr_device = None
         self.hold_graph = False
-        self.A = torch.normal(mean=0, std=1.0/self.h_in, size=[self.h_out, self.h_in])
-        self.noise_std = 0.001
+        torch.manual_seed(1234)
+        self.A = torch.normal(mean=0, std=1.0/self.h_in, size=[self.h_in, self.h_out])  # (m, n)
+        print('A: {}'.format(self.A))
+        self.noise_std = 0.01
         self.compress_loss = []
         try:
             self.hold_graph = self.params['retain_first_backpass']
@@ -45,21 +46,18 @@ class VAEXperiment(pl.LightningModule):
         return self.model(input, **kwargs)
 
     def training_step(self, batch, batch_idx, optimizer_idx=0):
-        # TODO: Normalize data here instead of dataloader
-        imu, _ = batch  # [b, 1, h_out, w_out]
+        imu, _ = batch  # (b, 1, h_out)
         batch_size = self.trainer.datamodule.train_batch_size
 
         self.curr_device = imu.device
         noise = self.noise_std * torch.randn((batch_size, self.h_in))  # m compressed measurements
-        imu_flat = torch.reshape(imu, [batch_size, self.h_out])
-        # (b, h_out) * (h_out, h_in) + (b, h_in) -> (b, h_in)
-        y_batch = torch.matmul(imu_flat, self.A.to(self.curr_device))
-        y_batch = torch.add(y_batch, noise.to(self.curr_device))
+        imu_flat = torch.squeeze(imu)
+        y_batch = matmul_A(imu_flat, self.A.to(self.curr_device), noise.to(self.curr_device))
         y_batch = y_batch.to(self.curr_device)
 
         results = self.forward(y_batch, A=self.A.to(self.curr_device))
         train_loss = self.model.loss_function(*results,
-                                              M_N=self.params['kld_weight'],  # al_img.shape[0]/ self.num_train_imgs,
+                                              M_N=self.params['kld_weight']/batch_size,
                                               optimizer_idx=optimizer_idx,
                                               batch_idx=batch_idx)
 
@@ -73,15 +71,13 @@ class VAEXperiment(pl.LightningModule):
 
         self.curr_device = imu.device
         noise = self.noise_std * torch.randn((batch_size, self.h_in))  # m compressed measurements
-        imu_flat = torch.reshape(imu, [batch_size, self.h_out])
-        # (b, h_out) * (h_out, h_in) + (b, h_in) -> (b, h_in)
-        y_batch = torch.matmul(imu_flat, self.A.to(self.curr_device))
-        y_batch = torch.add(y_batch, noise.to(self.curr_device))
+        imu_flat = torch.squeeze(imu)
+        y_batch = matmul_A(imu_flat, self.A.to(self.curr_device), noise.to(self.curr_device))
         y_batch = y_batch.to(self.curr_device)
 
         results = self.forward(y_batch, A=self.A.to(self.curr_device))
         val_loss = self.model.loss_function(*results,
-                                            M_N=self.params['kld_weight'],  # real_img.shape[0]/ self.num_val_imgs,
+                                            M_N=self.params['kld_weight']/batch_size,
                                             optimizer_idx=optimizer_idx,
                                             batch_idx=batch_idx)
 
@@ -111,19 +107,17 @@ class VAEXperiment(pl.LightningModule):
         test_samples_list = list(iter(self.trainer.datamodule.test_dataloader()))
         nb_test_samples = len(test_samples_list)
         random_idx = np.random.choice(nb_test_samples)
-        test_imu, _ = test_samples_list[random_idx]  # [b, 1, h_out, tw]
+        imu, _ = test_samples_list[random_idx]  # [b, 1, h_out]
         batch_size = self.trainer.datamodule.val_batch_size
 
         noise = self.noise_std * torch.randn((batch_size, self.h_in))  # m compressed measurements
-        test_imu = torch.reshape(test_imu, [batch_size, self.h_out])
-        # (b, h_out) * (h_out, h_in) + (b, h_in) -> (b, h_in)
-        y_batch = torch.matmul(test_imu.to(self.curr_device), self.A.to(self.curr_device))
-        y_batch = torch.add(y_batch, noise.to(self.curr_device))
+        imu_flat = torch.squeeze(imu)
+        y_batch = matmul_A(imu_flat.to(self.curr_device), self.A.to(self.curr_device), noise.to(self.curr_device))
         y_batch = y_batch.to(self.curr_device)
 
         recons = self.model.generate(y_batch, A=self.A.to(self.curr_device))
         recons = recons.cpu().data
-        labels = test_imu.cpu().data
+        labels = torch.squeeze(imu).cpu().data
 
         cs_loss = self.get_mse(recons, labels)
         self.compress_loss.append(cs_loss)

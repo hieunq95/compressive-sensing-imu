@@ -196,6 +196,7 @@ class SMPLVAE(BaseVAE):
         decoder_layers = [
             nn.Linear(self.h_dim, self.h_dim),
             nn.ReLU(),
+            nn.Dropout(0.2),
             nn.Linear(self.h_dim, self.h_out),
             # nn.Tanh()
         ]
@@ -272,15 +273,14 @@ class MyVAE(BaseVAE):
         self.in_channels = in_channels
         self.h_in = h_in
         self.h_out = h_out
-        self.h_dim = 512
+        self.h_dim = 64
+        torch.manual_seed(1234)
 
         # Define the encoder layers as a list of tuples, where each tuple contains the
         # layer type and its corresponding parameters.
         encoder_layers = [
-            nn.Dropout(0.2),
+            # nn.Dropout(0.2),
             nn.Linear(self.h_in, self.h_dim),
-            nn.ReLU(),
-            nn.Linear(self.h_dim, self.h_dim),
             nn.ReLU(),
         ]
 
@@ -290,13 +290,12 @@ class MyVAE(BaseVAE):
 
         # Define the decoder layers as a list of tuples, where each tuple contains the
         # layer type and its corresponding parameters.
-        self.decoder_input = nn.Linear(self.latent_dim, self.h_dim)  # fc_mu, fc_var -> decoder_input
+        # self.decoder_input = nn.Linear(self.latent_dim, self.h_dim)  # fc_mu, fc_var -> decoder_input
         decoder_layers = [
-            nn.Linear(self.h_dim, self.h_dim),
+            nn.Linear(self.latent_dim, self.h_dim),
             nn.ReLU(),
-            nn.Dropout(0.2),
             nn.Linear(self.h_dim, self.h_out),
-            # nn.Tanh()
+            nn.Tanh()
         ]
 
         self.decoder = nn.Sequential(*decoder_layers)  # decoder_input -> decoder -> x_hat
@@ -325,8 +324,8 @@ class MyVAE(BaseVAE):
         :param z: (Tensor) [B x D]
         :return: (Tensor) [B x C x H x W]
         """
-        result = self.decoder_input(z)
-        result = self.decoder(result)
+        # result = self.decoder_input(z)
+        result = self.decoder(z)
 
         return result
 
@@ -366,15 +365,15 @@ class MyVAE(BaseVAE):
         :param kwargs:
         :return:
         """
-        recons = args[0]  # (b, n)
-        input = args[1]
+        recons = args[0]  # (b, h_out)
+        input = args[1]  # (b, h_in)
         mu = args[2]
         log_var = args[3]
-        A = args[4]  # (n, m)
+        A = args[4]  # (h_in, h_out)
 
         kld_weight = kwargs['M_N']  # Account for the minibatch samples from the dataset
         # print('recons: {}, input: {}, A: {}'.format(recons.size(), input.size(), A.size()))
-        recons = torch.matmul(recons, A)  # (b, n) x (n, m) -> (b, m)
+        recons = matmul_A(recons, A, noise=None)
         recons_loss = F.mse_loss(recons, input, reduction='mean')
 
         kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)

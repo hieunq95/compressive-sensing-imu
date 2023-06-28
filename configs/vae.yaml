@@ -1,14 +1,14 @@
 model_params:
   name: 'VanillaVAE'
   in_channels: 1
-  latent_dim: 30
-  h_in: &h_in 140
+  latent_dim: 10 # 4 - 10
+  h_in: &h_in 102  # 102 - 170
   h_out: &h_out 204
 
 data_params:
   data_path: "/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/"
-  train_batch_size: 6
-  val_batch_size:  6
+  train_batch_size: 60
+  val_batch_size:  512
   patch_size: 4
   num_workers: 4
 
@@ -17,14 +17,14 @@ exp_params:
   LR: 0.0001
   weight_decay: 0.0
   scheduler_gamma: 0.95
-  kld_weight: 0.00001
+  kld_weight: 0.0
   manual_seed: 1234
   h_in: *h_in
   h_out: *h_out
 
 trainer_params:
   gpus: [0]
-  max_epochs: 21
+  max_epochs: 51
 
 logging_params:
   save_dir: "logs/"

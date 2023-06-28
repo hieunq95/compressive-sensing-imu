@@ -29,36 +29,25 @@ def rot_matrix_to_aa(data):
 
 
 def matmul_A(x, A, noise=None):
-    """Calculate x*A + noise -> y  from h_out -> h_in for input.
-    :param  x (b, 1, h_out, w_out)
-    :param  A (h_out * w_out, h_in * w_in)
-    :param  noise (b, 1, h_in, w_in)
-    :return - y (b, 1, h_in, w_in)
+    """Calculate y = Ax + eta \
+    :param  x (b, h_out)
+    :param  A (h_in, h_out)
+    :param  noise (b, h_in)
+    :return - y (b, h_in)
 
     """
-    b = x.shape[0]
-    h_out = x.shape[2]
-    w_out = x.shape[3]
+    # (h_in, h_out) * (h_out, b) + (h_in, b) -> (h_in, b)
+    x_T = torch.transpose(x, 0, 1)  # (h_out, b)
+    Ax_T = torch.matmul(A, x_T)  # (h_in, b)
     if noise is not None:
-        h_in = noise.shape[2]
-        w_in = noise.shape[3]
+        noise_T = torch.transpose(noise, 0, 1)  # (h_in, b)
+        y = torch.add(Ax_T, noise_T)  # (h_in, b)
     else:
-        w_in = 6
-        h_in = A.shape[1] // w_in
+        y = Ax_T
 
-    n = h_out * w_out
-    m = h_in * w_in
-    x_flat = torch.reshape(x, [b, n])
-    # (b, n) * (n, m) -> (b, m)
-    y = torch.matmul(x_flat, A)
-    # (b, m) + (b, m) -> (b, m)
-    if noise is not None:
-        noise_flat = torch.reshape(noise, [b, m])
-        y = torch.add(y, noise_flat)
-    # (b, m) -> (b, 1, h_in, w_win)
-    y = torch.reshape(y, [b, 1, h_in, w_in])
+    y_T = torch.transpose(y, 0, 1)
 
-    return y
+    return y_T
 
 
 def transpose_transform(x, y, a):
@@ -107,10 +96,11 @@ def plot_reconstruction_data(x, y, dir):
 
     # plot using matplotlib
     num_images = b
+    imu_position = 13
     for i in range(num_images):
         figure, (ax1, ax2) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]})
-        ax1.plot(x[i, :], linestyle='--', label='Recons')
-        ax1.plot(y[i, :], linestyle='-', label='Labels')
+        ax1.plot(x[i, imu_position*9:(imu_position+2)*9], linestyle='--', label='Recons')
+        ax1.plot(y[i, imu_position*9:(imu_position+2)*9], linestyle='-', label='Labels')
         print('Measurement loss: {}'.format(get_l2_norm(x, y)))
 
         ax1.set_title('Real-time prediction')

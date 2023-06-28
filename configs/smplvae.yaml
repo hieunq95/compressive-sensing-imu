@@ -1,19 +1,19 @@
 model_params:
   name: 'SMPLVAE'
   in_channels: 1
-  latent_dim: 30
+  latent_dim: 20
   h_in: &h_in 204
   h_out: &h_out 72
 
 data_params:
   data_path: "/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/"
-  train_batch_size: 60
-  val_batch_size:  60
+  train_batch_size: 6
+  val_batch_size:  6
   patch_size: 4
   num_workers: 4
 
 exp_params:
-  LR: 0.00005
+  LR: 0.0001
   weight_decay: 0.0
   scheduler_gamma: 0.95
   kld_weight: 0.0005
@@ -23,7 +23,7 @@ exp_params:
 
 trainer_params: &trainer_params
   gpus: [0]
-  max_epochs: 51
+  max_epochs: 31
 
 logging_params:
   save_dir: "/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/logs"

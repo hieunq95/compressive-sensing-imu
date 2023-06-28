@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from imu_utils import *
 from typing import Union, List, Sequence, Optional
-# from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, MaxAbsScaler
 from torch.utils.data import DataLoader, Dataset
 from pytorch_lightning import LightningDataModule
 
@@ -20,7 +20,7 @@ class IMUDataset(Dataset):
         self.transform = transform
         self.mode = mode
         # self.ori_scaler = MinMaxScaler()
-        # self.acc_scaler = MinMaxScaler()
+        self.acc_scaler = MaxAbsScaler()
         if self.mode == 'train':
             subjects = [
                         's_01',
@@ -49,6 +49,15 @@ class IMUDataset(Dataset):
 
         print('Loading {} IMU readings from files: ... \n'.format(self.mode))
         self.imu, self.gt = self.__get_data_chunks(pkl_files)
+        seq_len = len(self.imu)
+        imu_reshape = np.reshape(self.imu, [seq_len, 204])
+        ori_data = imu_reshape[:, :153]
+        # normalize acceleration
+        acc_data = imu_reshape[:, 153:]
+        acc_data = np.reshape(acc_data, [seq_len, 51])
+        acc_data_abs = self.acc_scaler.fit_transform(acc_data)
+        self.imu = np.concatenate((ori_data, acc_data_abs), axis=1)
+        self.imu = np.reshape(self.imu, [seq_len, 1, 204])
         print('{} dataset length: {}'.format(self.mode, self.__len__()))
         print('One imu/gt shapes: {}/{}'.format(self.imu[0].shape, self.gt[0].shape))
 
@@ -63,6 +72,10 @@ class IMUDataset(Dataset):
         return imu, gt
 
     def __get_data_chunks(self, pkl_files):
+        """
+        Return the IMU dataset. The output format is a tuple of imu with shape (seq_len, 1, 204)
+        and gt with shape (seq_len, 1, 72)
+        """
         imu_out = []
         gt_out = []
         for f in pkl_files:
@@ -73,10 +86,14 @@ class IMUDataset(Dataset):
             # # reshape ori [seq_len, 51]
             # imu_ori_data = rot_matrix_to_aa(np.reshape(imu_ori_data, [seq_len, self.nb_imus * 9]))
             # reshape acc [seq_len, 51]
+
             imu_ori_data = np.reshape(imu_ori_data, [seq_len, self.nb_imus * 9])
             imu_acc_data = np.reshape(imu_acc_data, [seq_len, self.nb_imus * 3])
-            # rescale acc
-            imu_acc_data = imu_acc_data / 9.8
+            # print('One ori sample: {}'.format(imu_acc_data[0, :]))
+            # normalize acc
+            # imu_acc_root = imu_acc_data[:, 3:6]  # sensor placed on the spine
+            # imu_acc_root = np.repeat(imu_acc_root, 17, axis=1)
+            # imu_acc_data = np.subtract(imu_acc_data, imu_acc_root) / 9.8
             # merge and clean ori + acc + gt
             imu_data = np.concatenate((imu_ori_data, imu_acc_data), axis=1)
             merged_data = np.concatenate((imu_data, gt_data), axis=1)  # [seq_len, 276]
@@ -136,7 +153,7 @@ class CompSensDataset(LightningDataModule):
             self.train_dataset,
             batch_size=self.train_batch_size,
             num_workers=self.num_workers,
-            shuffle=False,
+            shuffle=True,
             drop_last=True,
             pin_memory=self.pin_memory,
         )
@@ -146,7 +163,7 @@ class CompSensDataset(LightningDataModule):
             self.validate_dataset,
             batch_size=self.val_batch_size,
             num_workers=self.num_workers,
-            shuffle=False,
+            shuffle=True,
             drop_last=True,
             pin_memory=self.pin_memory,
         )

@@ -5,7 +5,6 @@ import pyrender
 import trimesh
 import numpy as np
 import torch
-torch.manual_seed(1234)
 from torch.utils.data import DataLoader
 from torch.nn import functional as F
 from train_smpl_vae import SMPLexperiment
@@ -86,8 +85,7 @@ def body_from_vertices(vertices, faces, animation=False):
 
 
 def smpl_forward(imu, gt, vae_model, body_model, batch_size, animation=False):
-    y_hat = vae_model(imu, labels=gt)[0]  # [b, 1, 72]
-    pose = torch.reshape(y_hat, [batch_size, 72])
+    pose = vae_model(imu, labels=gt)[0]  # [b, 1, 72]
 
     faces = body_model.faces
     batsz = pose.shape[0]
@@ -97,6 +95,7 @@ def smpl_forward(imu, gt, vae_model, body_model, batch_size, animation=False):
 
 
 def eval_models(vae_ver=0, spml_vae_ver=0, batch_size=64, frame_id=0, animation=False):
+    torch.manual_seed(1234)
     smpl_vae_config_fname = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/configs/smplvae.yaml'
     conv_vae_config_fname = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/configs/vae.yaml'
 
@@ -148,22 +147,20 @@ def eval_models(vae_ver=0, spml_vae_ver=0, batch_size=64, frame_id=0, animation=
     e = list(iter(test_loader))[frame_id]
 
     # e = next(iter(test_examples))
-    (imu, gt) = e  # imu: (b, 1, 102, tw), gt: [b, 1, 72, tw]
+    (imu, gt) = e
 
     # test ConvoVAE model with reconstructed data
     A = exp2.A
+    print('A: {}'.format(A))
     m = exp2.h_in
     noise = exp2.noise_std * torch.randn((batch_size, m))  # m compressed measurements
-    imu_flat = torch.reshape(imu, [batch_size, exp2.h_out])
-    # (b, h_out) * (h_out, h_in) + (b, h_in) -> (b, h_in)
-    y_batch = torch.matmul(imu_flat, A)
-    y_batch = torch.add(y_batch, noise)
+    imu_flat = torch.squeeze(imu)
+    y_batch = matmul_A(imu_flat, A, noise)
     # recons = conv_vae_model.generate(y_batch, A=A)  # [b, 1, h_out, tw]
     recons = vae_model(y_batch, A=A)[0]  # [b, h_out]
-    recons = torch.reshape(recons, [batch_size, 1, exp2.h_out])
 
-    smpl_forward(recons, gt, smpl_vae_model, body_model, batch_size, animation)
-    smpl_forward(imu, gt, smpl_vae_model, body_model, batch_size, animation)
+    smpl_forward(recons, torch.squeeze(gt), smpl_vae_model, body_model, batch_size, animation)
+    smpl_forward(imu_flat, torch.squeeze(gt), smpl_vae_model, body_model, batch_size, animation)
     # Visualize the ground truth
     # pose = torch.reshape(gt, [batch_size, 72])
     # pose = torch.reshape(pose, [batch_size, 72])
@@ -209,7 +206,7 @@ def eval_vae(vae_ver=0, batch_size=64, batch_id=0):
     A = exp2.A
     m = exp2.h_in
     noise = exp2.noise_std * torch.randn((batch_size, m))  # m compressed measurements
-    imu_flat = torch.reshape(imu, [batch_size, exp2.h_out])
+    imu_flat = torch.squeeze(imu)
     # (b, h_out) * (h_out, h_in) + (b, h_in) -> (b, h_in)
     y_batch = torch.matmul(imu_flat, A)
     y_batch = torch.add(y_batch, noise)
@@ -250,7 +247,7 @@ def eval_smpl_vae(smpl_vae_ver=0, frame_id=0):
     body_model = smplx.create(model_path=bm_fname, model_type='smpl', gender='male', dtype=torch.float64)
     print('Model: {}'.format(body_model))
 
-    smpl_forward(imu, gt, model, body_model, batch_size, True)
+    smpl_forward(torch.squeeze(imu), torch.squeeze(gt), model, body_model, batch_size, True)
 
     # Visualize the ground truth
     pose = torch.reshape(gt, [batch_size, 72])
@@ -262,6 +259,6 @@ def eval_smpl_vae(smpl_vae_ver=0, frame_id=0):
 
 
 if __name__ == '__main__':
-    # eval_models(vae_ver=38, spml_vae_ver=15, batch_size=6, frame_id=8976, animation=True)
-    eval_vae(vae_ver=38, batch_size=6, batch_id=8976)
-    # eval_smpl_vae(smpl_vae_ver=15, frame_id=99)
+    eval_models(vae_ver=116, spml_vae_ver=21, batch_size=6, frame_id=1123, animation=False)  # 8976
+    # eval_vae(vae_ver=78, batch_size=6, batch_id=3333)
+    # eval_smpl_vae(smpl_vae_ver=21, frame_id=99)

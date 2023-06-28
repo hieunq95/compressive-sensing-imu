@@ -43,6 +43,7 @@ class SMPLexperiment(pl.LightningModule):
 
     def training_step(self, batch, batch_idx, optimizer_idx=0):
         imu, gt = batch  # (b, 1, h_in), (b, 1, h_out)
+        imu = torch.squeeze(imu)
         self.curr_device = imu.device
         results = self.forward(imu, labels=gt)
         train_loss = self.model.loss_function(*results,
@@ -56,6 +57,7 @@ class SMPLexperiment(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
         imu, gt = batch
+        imu = torch.squeeze(imu)
         self.curr_device = imu.device
         results = self.forward(imu, labels=gt)
         val_loss = self.model.loss_function(*results,
@@ -82,6 +84,7 @@ class SMPLexperiment(pl.LightningModule):
         nb_test_samples = len(test_samples_list)
         random_idx = np.random.choice(nb_test_samples)
         imu, gt = test_samples_list[random_idx]
+        imu = torch.squeeze(imu)
         imu = imu.to(self.curr_device)
         gt = gt.to(self.curr_device)
         b = self.trainer.datamodule.val_batch_size
