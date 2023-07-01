@@ -88,7 +88,7 @@ def save_fig(filename):
     plt.close()
 
 
-def plot_reconstruction_data(x, y, dir):
+def plot_reconstruction_data(x, y, imu_start, imu_end, dir):
     # /home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/logs/ConvoVAE/version_37
     dir_save = os.path.join(dir, 'Evaluation')
     Path(dir_save).mkdir(exist_ok=True, parents=True)
@@ -96,11 +96,10 @@ def plot_reconstruction_data(x, y, dir):
 
     # plot using matplotlib
     num_images = b
-    imu_position = 13
     for i in range(num_images):
         figure, (ax1, ax2) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]})
-        ax1.plot(x[i, imu_position*9:(imu_position+2)*9], linestyle='--', label='Recons')
-        ax1.plot(y[i, imu_position*9:(imu_position+2)*9], linestyle='-', label='Labels')
+        ax1.plot(x[i, imu_start*9:(imu_end+1)*9], linestyle='--', label='Recons')
+        ax1.plot(y[i, imu_start*9:(imu_end+1)*9], linestyle='-', label='Labels')
         print('Measurement loss: {}'.format(get_l2_norm(x, y)))
 
         ax1.set_title('Real-time prediction')

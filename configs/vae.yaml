@@ -1,8 +1,8 @@
 model_params:
   name: 'VanillaVAE'
   in_channels: 1
-  latent_dim: 10 # 4 - 10
-  h_in: &h_in 102  # 102 - 170
+  latent_dim: 10
+  h_in: &h_in 102
   h_out: &h_out 204
 
 data_params:
@@ -15,9 +15,9 @@ data_params:
 
 exp_params:
   LR: 0.0001
-  weight_decay: 0.0
+  weight_decay: 0.01
   scheduler_gamma: 0.95
-  kld_weight: 0.0
+  kld_weight: 0.00001
   manual_seed: 1234
   h_in: *h_in
   h_out: *h_out

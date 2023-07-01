@@ -273,28 +273,26 @@ class MyVAE(BaseVAE):
         self.in_channels = in_channels
         self.h_in = h_in
         self.h_out = h_out
-        self.h_dim = 64
+        self.h_dims = [64, 64]
         torch.manual_seed(1234)
 
         # Define the encoder layers as a list of tuples, where each tuple contains the
         # layer type and its corresponding parameters.
         encoder_layers = [
-            # nn.Dropout(0.2),
-            nn.Linear(self.h_in, self.h_dim),
+            nn.Dropout(0.25),
+            nn.Linear(self.h_in, self.h_dims[0]),
             nn.ReLU(),
         ]
 
         self.encoder = nn.Sequential(*encoder_layers)  # x -> encoder
-        self.fc_mu = nn.Linear(self.h_dim, self.latent_dim)  # encoder -> fc_mu
-        self.fc_var = nn.Linear(self.h_dim, self.latent_dim)  # encoder -> fc_var
+        self.fc_mu = nn.Linear(self.h_dims[0], self.latent_dim)  # encoder -> fc_mu
+        self.fc_var = nn.Linear(self.h_dims[0], self.latent_dim)  # encoder -> fc_var
 
-        # Define the decoder layers as a list of tuples, where each tuple contains the
-        # layer type and its corresponding parameters.
-        # self.decoder_input = nn.Linear(self.latent_dim, self.h_dim)  # fc_mu, fc_var -> decoder_input
         decoder_layers = [
-            nn.Linear(self.latent_dim, self.h_dim),
+            nn.Linear(self.latent_dim, self.h_dims[1]),
             nn.ReLU(),
-            nn.Linear(self.h_dim, self.h_out),
+            # nn.Dropout(0.25),
+            nn.Linear(self.h_dims[1], self.h_out),
             nn.Tanh()
         ]
 
@@ -374,7 +372,7 @@ class MyVAE(BaseVAE):
         kld_weight = kwargs['M_N']  # Account for the minibatch samples from the dataset
         # print('recons: {}, input: {}, A: {}'.format(recons.size(), input.size(), A.size()))
         recons = matmul_A(recons, A, noise=None)
-        recons_loss = F.mse_loss(recons, input, reduction='mean')
+        recons_loss = F.mse_loss(recons, input, reduction='sum')
 
         kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)
 

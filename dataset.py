@@ -33,7 +33,7 @@ class IMUDataset(Dataset):
             subjects = [
                         's_01',
                         # 's_03',
-                        # 's_07',
+                        's_07',
             ]
         else:
             subjects = [
@@ -50,11 +50,10 @@ class IMUDataset(Dataset):
         print('Loading {} IMU readings from files: ... \n'.format(self.mode))
         self.imu, self.gt = self.__get_data_chunks(pkl_files)
         seq_len = len(self.imu)
-        imu_reshape = np.reshape(self.imu, [seq_len, 204])
+        imu_reshape = np.squeeze(self.imu)
         ori_data = imu_reshape[:, :153]
         # normalize acceleration
         acc_data = imu_reshape[:, 153:]
-        acc_data = np.reshape(acc_data, [seq_len, 51])
         acc_data_abs = self.acc_scaler.fit_transform(acc_data)
         self.imu = np.concatenate((ori_data, acc_data_abs), axis=1)
         self.imu = np.reshape(self.imu, [seq_len, 1, 204])
@@ -83,18 +82,10 @@ class IMUDataset(Dataset):
             imu_acc_data = pkl.load(open(f, 'rb'), encoding='latin1')['imu_acc']   # [seq_len, 17, 3]
             gt_data = pkl.load(open(f, 'rb'), encoding='latin1')['gt']  # [seq_len, 72]
             seq_len = imu_ori_data.shape[0]
-            # # reshape ori [seq_len, 51]
-            # imu_ori_data = rot_matrix_to_aa(np.reshape(imu_ori_data, [seq_len, self.nb_imus * 9]))
-            # reshape acc [seq_len, 51]
 
             imu_ori_data = np.reshape(imu_ori_data, [seq_len, self.nb_imus * 9])
             imu_acc_data = np.reshape(imu_acc_data, [seq_len, self.nb_imus * 3])
             # print('One ori sample: {}'.format(imu_acc_data[0, :]))
-            # normalize acc
-            # imu_acc_root = imu_acc_data[:, 3:6]  # sensor placed on the spine
-            # imu_acc_root = np.repeat(imu_acc_root, 17, axis=1)
-            # imu_acc_data = np.subtract(imu_acc_data, imu_acc_root) / 9.8
-            # merge and clean ori + acc + gt
             imu_data = np.concatenate((imu_ori_data, imu_acc_data), axis=1)
             merged_data = np.concatenate((imu_data, gt_data), axis=1)  # [seq_len, 276]
             # count number of Nan entries

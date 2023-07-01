@@ -94,10 +94,13 @@ def smpl_forward(imu, gt, vae_model, body_model, batch_size, animation=False):
     body_from_vertices(vts, faces, animation)
 
 
-def eval_models(vae_ver=0, spml_vae_ver=0, batch_size=64, frame_id=0, animation=False):
+def eval_models(vae_ver=0, spml_vae_ver=0, batch_size=64, batch_id=0, animation=False):
     torch.manual_seed(1234)
     smpl_vae_config_fname = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/configs/smplvae.yaml'
-    conv_vae_config_fname = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/configs/vae.yaml'
+    vae_config_fname = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/' \
+                       'logs/VanillaVAE/version_{}/config.yaml'.format(vae_ver)
+    A_fname = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/' \
+                       'logs/VanillaVAE/version_{}/A.pt'.format(vae_ver)
 
     with open(smpl_vae_config_fname, 'r') as f_1:
         try:
@@ -105,9 +108,9 @@ def eval_models(vae_ver=0, spml_vae_ver=0, batch_size=64, frame_id=0, animation=
         except yaml.YAMLError as exc:
             print(exc)
 
-    with open(conv_vae_config_fname, 'r') as f_2:
+    with open(vae_config_fname, 'r') as f_2:
         try:
-            config_conv_vae = yaml.safe_load(f_2)
+            config_vae = yaml.safe_load(f_2)
         except yaml.YAMLError as exc:
             print(exc)
 
@@ -128,13 +131,13 @@ def eval_models(vae_ver=0, spml_vae_ver=0, batch_size=64, frame_id=0, animation=
     smpl_vae_model.eval()
 
     # load VAE model
-    vae_model = MyVAE(**config_conv_vae['model_params'])
-    conv_trained_fname = os.path.join(config_conv_vae['logging_params']['save_dir'],
-                                      config_conv_vae['model_params']['name'], 'version_{}'.format(vae_ver),
+    vae_model = MyVAE(**config_vae['model_params'])
+    vae_trained_fname = os.path.join(config_vae['logging_params']['save_dir'],
+                                      config_vae['model_params']['name'], 'version_{}'.format(vae_ver),
                                       'checkpoints', 'last.ckpt')
-    exp2 = VAEXperiment(vae_model, config_conv_vae['exp_params'])
-    vae_model = exp2.load_from_checkpoint(conv_trained_fname, vae_model=vae_model,
-                                            params=config_conv_vae['exp_params'])
+    exp2 = VAEXperiment(vae_model, config_vae['exp_params'])
+    vae_model = exp2.load_from_checkpoint(vae_trained_fname, vae_model=vae_model,
+                                            params=config_vae['exp_params'])
     vae_model.eval()
 
     # test model with test dataset
@@ -144,13 +147,13 @@ def eval_models(vae_ver=0, spml_vae_ver=0, batch_size=64, frame_id=0, animation=
 
     test_len = len(list(iter(test_loader)))
     print('Number of batches: {}'.format(test_len))
-    e = list(iter(test_loader))[frame_id]
+    e = list(iter(test_loader))[batch_id]
 
     # e = next(iter(test_examples))
     (imu, gt) = e
 
     # test ConvoVAE model with reconstructed data
-    A = exp2.A
+    A = torch.load(A_fname)
     print('A: {}'.format(A))
     m = exp2.h_in
     noise = exp2.noise_std * torch.randn((batch_size, m))  # m compressed measurements
@@ -171,23 +174,26 @@ def eval_models(vae_ver=0, spml_vae_ver=0, batch_size=64, frame_id=0, animation=
     # body_from_vertices(vts, faces, animation)
 
 
-def eval_vae(vae_ver=0, batch_size=64, batch_id=0):
+def eval_vae(vae_ver=0, batch_size=64, batch_id=0, imu_start=0, imu_end=1):
     # load Convo_VAE model
-    vae_config_fname = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/configs/vae.yaml'
+    vae_config_fname = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/' \
+                       'logs/VanillaVAE/version_{}/config.yaml'.format(vae_ver)
+    A_fname = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/' \
+              'logs/VanillaVAE/version_{}/A.pt'.format(vae_ver)
     with open(vae_config_fname, 'r') as f_2:
         try:
             config_vae = yaml.safe_load(f_2)
         except yaml.YAMLError as exc:
             print(exc)
-        # load VAE model
-        vae_model = MyVAE(**config_vae['model_params'])
-        conv_trained_fname = os.path.join(config_vae['logging_params']['save_dir'],
-                                          config_vae['model_params']['name'], 'version_{}'.format(vae_ver),
-                                          'checkpoints', 'last.ckpt')
-        exp2 = VAEXperiment(vae_model, config_vae['exp_params'])
-        vae_model = exp2.load_from_checkpoint(conv_trained_fname, vae_model=vae_model,
-                                              params=config_vae['exp_params'])
-        vae_model.eval()
+    # load VAE model
+    vae_model = MyVAE(**config_vae['model_params'])
+    conv_trained_fname = os.path.join(config_vae['logging_params']['save_dir'],
+                                      config_vae['model_params']['name'], 'version_{}'.format(vae_ver),
+                                      'checkpoints', 'last.ckpt')
+    exp2 = VAEXperiment(vae_model, config_vae['exp_params'])
+    vae_model = exp2.load_from_checkpoint(conv_trained_fname, vae_model=vae_model,
+                                          params=config_vae['exp_params'])
+    vae_model.eval()
     # test_loader = exp2.trainer.datamodule.test_dataloader()
 
     # test model with test dataset
@@ -203,20 +209,20 @@ def eval_vae(vae_ver=0, batch_size=64, batch_id=0):
     imu, gt = e
 
     # test ConvoVAE model with reconstructed data
-    A = exp2.A
+    A = torch.load(A_fname)
     m = exp2.h_in
     noise = exp2.noise_std * torch.randn((batch_size, m))  # m compressed measurements
     imu_flat = torch.squeeze(imu)
     # (b, h_out) * (h_out, h_in) + (b, h_in) -> (b, h_in)
-    y_batch = torch.matmul(imu_flat, A)
-    y_batch = torch.add(y_batch, noise)
+    y_batch = matmul_A(imu_flat, A, noise)
     recons = vae_model(y_batch, A=A)[0]  # [b, h_out]
     dir_name = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/logs/VanillaVAE/version_{}'\
         .format(vae_ver)
-    plot_reconstruction_data(recons.cpu().data.detach().numpy(), imu_flat.cpu().data.detach().numpy(), dir_name)
+    plot_reconstruction_data(recons.cpu().data.detach().numpy(), imu_flat.cpu().data.detach().numpy(),
+                             imu_start, imu_end, dir_name)
 
 
-def eval_smpl_vae(smpl_vae_ver=0, frame_id=0):
+def eval_smpl_vae(smpl_vae_ver=0, batch_id=0):
     fname = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/configs/smplvae.yaml'
     with open(fname, 'r') as f_2:
         try:
@@ -238,7 +244,7 @@ def eval_smpl_vae(smpl_vae_ver=0, frame_id=0):
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
     test_len = len(list(iter(test_loader)))
     print('test_len: {}'.format(test_len))
-    e = list(iter(test_loader))[frame_id]
+    e = list(iter(test_loader))[batch_id]
 
     # e = next(iter(test_examples))
     imu, gt = e  # imu: (b, 1, 204), gt: [b, 1, 72]
@@ -259,6 +265,27 @@ def eval_smpl_vae(smpl_vae_ver=0, frame_id=0):
 
 
 if __name__ == '__main__':
-    eval_models(vae_ver=116, spml_vae_ver=21, batch_size=6, frame_id=1123, animation=False)  # 8976
-    # eval_vae(vae_ver=78, batch_size=6, batch_id=3333)
-    # eval_smpl_vae(smpl_vae_ver=21, frame_id=99)
+    # IMU map:
+    imu_map = {
+        'head:': 0,
+        'spine2': 1,
+        'belly': 2,
+        'lchest': 3,
+        'rchest': 4,
+        'lshoulder': 5,
+        'rshoulder': 6,
+        'lelbow': 7,
+        'relbow': 8,
+        'lhip': 9,
+        'rhip': 10,
+        'lknee': 11,
+        'rknee': 12,
+        'lwrist': 13,
+        'rwrist': 14,
+        'lankle': 15,
+        'rankle': 16
+    }
+
+    eval_models(vae_ver=168, spml_vae_ver=24, batch_size=60, batch_id=126, animation=False)  # 8976
+    # eval_vae(vae_ver=164, batch_size=60, batch_id=156, imu_start=imu_map['lwrist'], imu_end=imu_map['rwrist'])
+    # eval_smpl_vae(smpl_vae_ver=24, batch_id=99)

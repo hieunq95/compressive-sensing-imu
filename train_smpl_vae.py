@@ -42,12 +42,12 @@ class SMPLexperiment(pl.LightningModule):
         return self.model(input, **kwargs)
 
     def training_step(self, batch, batch_idx, optimizer_idx=0):
-        imu, gt = batch  # (b, 1, h_in), (b, 1, h_out)
+        imu, gt = batch
         imu = torch.squeeze(imu)
         self.curr_device = imu.device
         results = self.forward(imu, labels=gt)
         train_loss = self.model.loss_function(*results,
-                                              M_N=self.params['kld_weight'],  # al_img.shape[0]/ self.num_train_imgs,
+                                              M_N=self.params['kld_weight']/imu.shape[0],
                                               optimizer_idx=optimizer_idx,
                                               batch_idx=batch_idx)
 
@@ -61,7 +61,7 @@ class SMPLexperiment(pl.LightningModule):
         self.curr_device = imu.device
         results = self.forward(imu, labels=gt)
         val_loss = self.model.loss_function(*results,
-                                            M_N=self.params['kld_weight'],  # real_img.shape[0]/ self.num_val_imgs,
+                                            M_N=self.params['kld_weight']/imu.shape[0],
                                             optimizer_idx=optimizer_idx,
                                             batch_idx=batch_idx)
 

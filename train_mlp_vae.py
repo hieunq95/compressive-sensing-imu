@@ -1,4 +1,5 @@
 import os
+import shutil
 import argparse
 import yaml
 import threading
@@ -27,7 +28,6 @@ class VAEXperiment(pl.LightningModule):
         super(VAEXperiment, self).__init__()
         self.model = vae_model
         self.params = params
-        # h_in * w_in = 102
         self.h_in = self.params['h_in']
         self.h_out = self.params['h_out']
         self.curr_device = None
@@ -35,7 +35,7 @@ class VAEXperiment(pl.LightningModule):
         torch.manual_seed(1234)
         self.A = torch.normal(mean=0, std=1.0/self.h_in, size=[self.h_in, self.h_out])  # (m, n)
         print('A: {}'.format(self.A))
-        self.noise_std = 0.01
+        self.noise_std = 1e-5
         self.compress_loss = []
         try:
             self.hold_graph = self.params['retain_first_backpass']
@@ -57,7 +57,7 @@ class VAEXperiment(pl.LightningModule):
 
         results = self.forward(y_batch, A=self.A.to(self.curr_device))
         train_loss = self.model.loss_function(*results,
-                                              M_N=self.params['kld_weight']/batch_size,
+                                              M_N=self.params['kld_weight']*batch_size,
                                               optimizer_idx=optimizer_idx,
                                               batch_idx=batch_idx)
 
@@ -77,7 +77,7 @@ class VAEXperiment(pl.LightningModule):
 
         results = self.forward(y_batch, A=self.A.to(self.curr_device))
         val_loss = self.model.loss_function(*results,
-                                            M_N=self.params['kld_weight']/batch_size,
+                                            M_N=self.params['kld_weight']*batch_size,
                                             optimizer_idx=optimizer_idx,
                                             batch_idx=batch_idx)
 
@@ -221,6 +221,9 @@ def run():
 
     Path(f"{tb_logger.log_dir}/Samples").mkdir(exist_ok=True, parents=True)
     Path(f"{tb_logger.log_dir}/Reconstructions").mkdir(exist_ok=True, parents=True)
+    # Save config file and matrix A
+    shutil.copyfile(config_file, os.path.join(tb_logger.log_dir, "config.yaml"))
+    torch.save(experiment.A, os.path.join(tb_logger.log_dir, "A.pt"))
 
     print(f"======= Training {config['model_params']['name']} =======")
     runner.fit(experiment, datamodule=data)
