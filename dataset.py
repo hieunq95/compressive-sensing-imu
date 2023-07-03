@@ -11,7 +11,7 @@ from pytorch_lightning import LightningDataModule
 
 # IMU dataset
 class IMUDataset(Dataset):
-    def __init__(self, data_path, mode='train', transform=None):
+    def __init__(self, data_path, mode='train', processing=False, transform=None):
         # data['imu_ori']: A numpy-array of shape (seq_length, 17, 3, 3)
         # data['imu_acc']: A numpy-array of shape (seq_length, 17, 3)
         self.sampling_rate = 60  # Hz
@@ -48,15 +48,20 @@ class IMUDataset(Dataset):
                     pkl_files.append(os.path.join(subject_path, f))
 
         print('Loading {} IMU readings from files: ... \n'.format(self.mode))
-        self.imu, self.gt = self.__get_data_chunks(pkl_files)
-        seq_len = len(self.imu)
-        imu_reshape = np.squeeze(self.imu)
-        ori_data = imu_reshape[:, :153]
-        # normalize acceleration
-        acc_data = imu_reshape[:, 153:]
-        acc_data_abs = self.acc_scaler.fit_transform(acc_data)
-        self.imu = np.concatenate((ori_data, acc_data_abs), axis=1)
-        self.imu = np.reshape(self.imu, [seq_len, 1, 204])
+        if processing:
+            self.imu, self.gt = self.__get_data_chunks(pkl_files)
+            seq_len = len(self.imu)
+            imu_reshape = np.squeeze(self.imu)
+            ori_data = imu_reshape[:, :153]
+            # normalize acceleration
+            acc_data = imu_reshape[:, 153:]
+            acc_data_abs = self.acc_scaler.fit_transform(acc_data)
+            self.imu = np.concatenate((ori_data, acc_data_abs), axis=1)
+            self.imu = np.reshape(self.imu, [seq_len, 1, 204])
+            np.savez(os.path.join(data_path, 'processed_{}.npz'.format(mode)), imu=self.imu, gt=self.gt)
+        else:
+            self.imu = np.load(os.path.join(data_path, 'processed_{}.npz'.format(mode)))['imu']
+            self.gt = np.load(os.path.join(data_path, 'processed_{}.npz'.format(mode)))['gt']
         print('{} dataset length: {}'.format(self.mode, self.__len__()))
         print('One imu/gt shapes: {}/{}'.format(self.imu[0].shape, self.gt[0].shape))
 

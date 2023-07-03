@@ -5,13 +5,16 @@ import pyrender
 import trimesh
 import numpy as np
 import torch
+import matplotlib
+import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from torch.nn import functional as F
 from train_smpl_vae import SMPLexperiment
 from vae import SMPLVAE, MyVAE
 from train_mlp_vae import VAEXperiment
 from dataset import IMUDataset
-from imu_utils import matmul_A, denormalize_acceleration, plot_reconstruction_data
+from imu_utils import matmul_A, plot_reconstruction_data, get_l2_norm
+from sklearn.linear_model import Lasso
 
 
 def measure_loss(x, y):
@@ -264,6 +267,94 @@ def eval_smpl_vae(smpl_vae_ver=0, batch_id=0):
     body_from_vertices(vts, faces, True)
 
 
+def eval_vae_lasso(vae_ver=0, batch_size=64, lasso_a=0.1):
+    np.random.seed(1234)
+    vae_config_fname = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/' \
+                       'logs/VanillaVAE/version_{}/config.yaml'.format(vae_ver)
+    A_fname = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/' \
+              'logs/VanillaVAE/version_{}/A.pt'.format(vae_ver)
+    saved_dir = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/' \
+              'logs/VanillaVAE/version_{}/results.npz'.format(vae_ver)
+    with open(vae_config_fname, 'r') as f_2:
+        try:
+            config_vae = yaml.safe_load(f_2)
+        except yaml.YAMLError as exc:
+            print(exc)
+    # load VAE model
+    vae_model = MyVAE(**config_vae['model_params'])
+    conv_trained_fname = os.path.join(config_vae['logging_params']['save_dir'],
+                                      config_vae['model_params']['name'], 'version_{}'.format(vae_ver),
+                                      'checkpoints', 'last.ckpt')
+    exp2 = VAEXperiment(vae_model, config_vae['exp_params'])
+    vae_model = exp2.load_from_checkpoint(conv_trained_fname, vae_model=vae_model,
+                                          params=config_vae['exp_params'])
+    vae_model.eval()
+    # test_loader = exp2.trainer.datamodule.test_dataloader()
+
+    # test model with test dataset
+    file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/'
+    test_dataset = IMUDataset(file_path, mode='test', transform=None)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
+
+    test_len = len(test_dataset)
+    print('Number of batches: {} -- version: {}'.format(test_len // batch_size, vae_ver))
+
+    # VAE parameters
+    A = torch.load(A_fname)
+    m = exp2.h_in
+    n = exp2.h_out
+    vae_loss = []
+
+    # lasso parameters
+    lasso_loss = []
+    A_lasso = torch.randn(size=[m, n])
+    lasso = Lasso(alpha=lasso_a, tol=1e-3)
+
+    for batch_id, (imu, gt) in enumerate(test_loader):
+        noise = exp2.noise_std * torch.randn((batch_size, m))  # m compressed measurements
+        imu_flat = torch.squeeze(imu)
+        y_batch = matmul_A(imu_flat, A, noise)
+        recons_vae = vae_model(y_batch, A=A)[0]  # [b, n]
+        loss_vae = get_l2_norm(recons_vae.cpu().detach().numpy(), imu_flat.cpu().detach().numpy())
+        vae_loss.append(loss_vae)
+
+        y_lasso = matmul_A(imu_flat, A_lasso, noise).cpu().detach().numpy()
+        lasso.fit(X=A_lasso, y=y_lasso.T)
+        recons_lasso = lasso.coef_.reshape([batch_size, n])
+        loss_lasso = get_l2_norm(recons_lasso, imu_flat.cpu().detach().numpy())
+        lasso_loss.append(loss_lasso)
+        if batch_id % 100 == 0:
+            print('Batch: {}: Mean VAE / Lasso losses: {} / {}'.format(
+                batch_id, np.mean(vae_loss), np.mean(lasso_loss)))
+
+    np.savez(saved_dir, vae=vae_loss, lasso=lasso_loss)
+
+
+def plot_results(vae_vers=[0, 1, 2, 3, 4, 5, 6, 7]):
+    matplotlib.use('TkAgg')
+    vae_loss_arr = []
+    lasso_loss_arr = []
+    for v in vae_vers:
+        f_name = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/' \
+                    'logs/VanillaVAE/version_{}/results.npz'.format(v)
+        results = np.load(f_name)
+        lasso_loss_arr.append(results['lasso'])
+        vae_loss_arr.append(results['vae'])
+
+    print('VAE losses: {}'.format(np.mean(vae_loss_arr, axis=1)))
+    print('Lasso losses: {}'.format(np.mean(lasso_loss_arr, axis=1)))
+    x = np.arange(len(vae_vers))
+    plt.errorbar(x, np.mean(vae_loss_arr, axis=1), yerr=np.std(vae_loss_arr, axis=1),
+                 fmt='-o', capsize=4, label='VAE')
+    plt.errorbar(x, np.mean(lasso_loss_arr, axis=1), yerr=np.std(vae_loss_arr, axis=1),
+                 fmt='-o', capsize=4, label='Lasso')
+
+    plt.xlabel('Compressed ratio')
+    plt.ylabel('Mean square error')
+    plt.legend()
+    plt.show()
+
+
 if __name__ == '__main__':
     # IMU map:
     imu_map = {
@@ -286,6 +377,8 @@ if __name__ == '__main__':
         'rankle': 16
     }
 
-    eval_models(vae_ver=168, spml_vae_ver=24, batch_size=60, batch_id=126, animation=False)  # 8976
-    # eval_vae(vae_ver=164, batch_size=60, batch_id=156, imu_start=imu_map['lwrist'], imu_end=imu_map['rwrist'])
+    # eval_models(vae_ver=0, spml_vae_ver=24, batch_size=60, batch_id=236, animation=False)  # 8976
+    # eval_vae(vae_ver=169, batch_size=60, batch_id=156, imu_start=imu_map['lwrist'], imu_end=imu_map['rwrist'])
     # eval_smpl_vae(smpl_vae_ver=24, batch_id=99)
+    # eval_vae_lasso(vae_ver=6, batch_size=60, lasso_a=0.1)
+    plot_results(vae_vers=[7, 0, 1, 2, 3, 4, 5, 6])
