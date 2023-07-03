@@ -32,7 +32,7 @@ class VAEXperiment(pl.LightningModule):
         self.h_out = self.params['h_out']
         self.curr_device = None
         self.hold_graph = False
-        torch.manual_seed(1234)
+        # torch.manual_seed(1234)
         self.A = torch.normal(mean=0, std=1.0/self.h_in, size=[self.h_in, self.h_out])  # (m, n)
         # print('A: {}'.format(self.A))
         self.noise_std = 1e-5

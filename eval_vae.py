@@ -268,7 +268,7 @@ def eval_smpl_vae(smpl_vae_ver=0, batch_id=0):
 
 
 def eval_vae_lasso(vae_ver=0, batch_size=64, lasso_a=0.1):
-    np.random.seed(1234)
+    # np.random.seed(1234)
     vae_config_fname = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/' \
                        'logs/VanillaVAE/version_{}/config.yaml'.format(vae_ver)
     A_fname = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/' \
@@ -343,7 +343,8 @@ def plot_results(vae_vers=[0, 1, 2, 3, 4, 5, 6, 7]):
 
     print('VAE losses: {}'.format(np.mean(vae_loss_arr, axis=1)))
     print('Lasso losses: {}'.format(np.mean(lasso_loss_arr, axis=1)))
-    x = np.arange(len(vae_vers))
+    # x = np.arange(len(vae_vers))
+    x = ['0.{}'.format(k) for k in range(1, 9)]
     plt.errorbar(x, np.mean(vae_loss_arr, axis=1), yerr=np.std(vae_loss_arr, axis=1),
                  fmt='-o', capsize=4, label='VAE')
     plt.errorbar(x, np.mean(lasso_loss_arr, axis=1), yerr=np.std(vae_loss_arr, axis=1),
@@ -351,6 +352,7 @@ def plot_results(vae_vers=[0, 1, 2, 3, 4, 5, 6, 7]):
 
     plt.xlabel('Compressed ratio')
     plt.ylabel('Mean square error')
+    plt.grid(linestyle='--')
     plt.legend()
     plt.show()
 
@@ -377,8 +379,8 @@ if __name__ == '__main__':
         'rankle': 16
     }
 
-    # eval_models(vae_ver=0, spml_vae_ver=24, batch_size=60, batch_id=236, animation=False)  # 8976
+    # eval_models(vae_ver=2, spml_vae_ver=24, batch_size=60, batch_id=888, animation=False)  # 8976
     # eval_vae(vae_ver=169, batch_size=60, batch_id=156, imu_start=imu_map['lwrist'], imu_end=imu_map['rwrist'])
     # eval_smpl_vae(smpl_vae_ver=24, batch_id=99)
-    # eval_vae_lasso(vae_ver=6, batch_size=60, lasso_a=0.1)
-    plot_results(vae_vers=[7, 0, 1, 2, 3, 4, 5, 6])
+    # eval_vae_lasso(vae_ver=7, batch_size=60, lasso_a=0.1)
+    plot_results(vae_vers=[0, 1, 2, 3, 4, 5, 6, 7])
