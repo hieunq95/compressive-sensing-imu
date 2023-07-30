@@ -2,8 +2,10 @@ model_params:
   name: 'VanillaVAE'
   in_channels: 1
   latent_dim: 10
-  h_in: &h_in 163  # compress 0.1 - 0.8: 20 - 40 - 61 - 81 - 102 - 122 - 142 - 163
+  h_in: &h_in 163  # compress 0.1 -> 0.8: 20 - 40 - 61 - 81 - 102* - 122 - 142 - 163
   h_out: &h_out 204
+  eta: &eta 0.01  # CSNR(dB) 0 -> 30: 0.1 - 0.0562 - 0.0316 - 0.0178 - 0.01* - 0.0056 - 0.0031
+  P_T: &P_T 0.01
 
 data_params:
   data_path: "/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/"
@@ -15,12 +17,14 @@ data_params:
 
 exp_params:
   LR: 0.0001
-  weight_decay: 0.1  # default 0.01
+  weight_decay: 0.05
   scheduler_gamma: 0.95
   kld_weight: 0.00001
   manual_seed: 1234
   h_in: *h_in
   h_out: *h_out
+  P_T: *P_T
+  eta: *eta
 
 trainer_params:
   gpus: [0]

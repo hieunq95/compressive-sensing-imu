@@ -159,9 +159,9 @@ def eval_models(vae_ver=0, spml_vae_ver=0, batch_size=64, batch_id=0, animation=
     A = torch.load(A_fname)
     print('A: {}'.format(A))
     m = exp2.h_in
-    noise = exp2.noise_std * torch.randn((batch_size, m))  # m compressed measurements
+    P_T = exp2.P_T
     imu_flat = torch.squeeze(imu)
-    y_batch = matmul_A(imu_flat, A, noise)
+    y_batch = matmul_A(imu_flat, A)
     # recons = conv_vae_model.generate(y_batch, A=A)  # [b, 1, h_out, tw]
     recons = vae_model(y_batch, A=A)[0]  # [b, h_out]
 
@@ -214,10 +214,10 @@ def eval_vae(vae_ver=0, batch_size=64, batch_id=0, imu_start=0, imu_end=1):
     # test ConvoVAE model with reconstructed data
     A = torch.load(A_fname)
     m = exp2.h_in
-    noise = exp2.noise_std * torch.randn((batch_size, m))  # m compressed measurements
+    P_T = exp2.P_T
     imu_flat = torch.squeeze(imu)
     # (b, h_out) * (h_out, h_in) + (b, h_in) -> (b, h_in)
-    y_batch = matmul_A(imu_flat, A, noise)
+    y_batch = matmul_A(imu_flat, A)
     recons = vae_model(y_batch, A=A)[0]  # [b, h_out]
     dir_name = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/logs/VanillaVAE/version_{}'\
         .format(vae_ver)
@@ -308,18 +308,18 @@ def eval_vae_lasso(vae_ver=0, batch_size=64, lasso_a=0.1):
     # lasso parameters
     lasso_loss = []
     A_lasso = torch.randn(size=[m, n])
-    lasso = Lasso(alpha=lasso_a, tol=1e-3)
+    lasso = Lasso(alpha=lasso_a, tol=1e-4)
 
     for batch_id, (imu, gt) in enumerate(test_loader):
-        noise = exp2.noise_std * torch.randn((batch_size, m))  # m compressed measurements
+        noise = torch.normal(mean=0, std=exp2.noise_std, size=(batch_size, m))
         imu_flat = torch.squeeze(imu)
         y_batch = matmul_A(imu_flat, A, noise)
         recons_vae = vae_model(y_batch, A=A)[0]  # [b, n]
         loss_vae = get_l2_norm(recons_vae.cpu().detach().numpy(), imu_flat.cpu().detach().numpy())
         vae_loss.append(loss_vae)
 
-        y_lasso = matmul_A(imu_flat, A_lasso, noise).cpu().detach().numpy()
-        lasso.fit(X=A_lasso, y=y_lasso.T)
+        y_lasso = y_batch.cpu().detach().numpy()
+        lasso.fit(X=A, y=y_lasso.T)
         recons_lasso = lasso.coef_.reshape([batch_size, n])
         loss_lasso = get_l2_norm(recons_lasso, imu_flat.cpu().detach().numpy())
         lasso_loss.append(loss_lasso)
@@ -382,5 +382,5 @@ if __name__ == '__main__':
     # eval_models(vae_ver=2, spml_vae_ver=24, batch_size=60, batch_id=888, animation=False)  # 8976
     # eval_vae(vae_ver=169, batch_size=60, batch_id=156, imu_start=imu_map['lwrist'], imu_end=imu_map['rwrist'])
     # eval_smpl_vae(smpl_vae_ver=24, batch_id=99)
-    # eval_vae_lasso(vae_ver=7, batch_size=60, lasso_a=0.1)
-    plot_results(vae_vers=[0, 1, 2, 3, 4, 5, 6, 7])
+    eval_vae_lasso(vae_ver=55, batch_size=60, lasso_a=0.0001)
+    # plot_results(vae_vers=[0, 1, 2, 3, 4, 5, 6, 7])

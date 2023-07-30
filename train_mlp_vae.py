@@ -1,6 +1,7 @@
 import os
 import shutil
 import argparse
+import math
 import yaml
 import threading
 import pytorch_lightning as pl
@@ -10,7 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from pathlib import Path
-from vae import ConvoVAE, BaseVAE, MyVAE
+from vae import BaseVAE, MyVAE
 from imu_utils import matmul_A
 from dataset import CompSensDataset
 from torch import Tensor
@@ -32,10 +33,10 @@ class VAEXperiment(pl.LightningModule):
         self.h_out = self.params['h_out']
         self.curr_device = None
         self.hold_graph = False
-        # torch.manual_seed(1234)
-        self.A = torch.normal(mean=0, std=1.0/self.h_in, size=[self.h_in, self.h_out])  # (m, n)
-        # print('A: {}'.format(self.A))
-        self.noise_std = 1e-5
+        self.P_T = self.params['P_T']
+        self.noise_std = self.params['eta']
+        sigma_a = 1/3 * math.sqrt(self.h_in * self.P_T / self.h_out)
+        self.A = torch.normal(mean=0, std=sigma_a, size=[self.h_in, self.h_out])  # (m, n)
         self.compress_loss = []
         try:
             self.hold_graph = self.params['retain_first_backpass']
@@ -50,9 +51,9 @@ class VAEXperiment(pl.LightningModule):
         batch_size = self.trainer.datamodule.train_batch_size
 
         self.curr_device = imu.device
-        noise = self.noise_std * torch.randn((batch_size, self.h_in))  # m compressed measurements
+        noise = torch.normal(mean=0, std=self.noise_std, size=[batch_size, self.h_in])
         imu_flat = torch.squeeze(imu)
-        y_batch = matmul_A(imu_flat, self.A.to(self.curr_device), noise.to(self.curr_device))
+        y_batch = matmul_A(imu_flat, self.A.to(self.curr_device), noise.to(self.curr_device))  # y = Ax + eta
         y_batch = y_batch.to(self.curr_device)
 
         results = self.forward(y_batch, A=self.A.to(self.curr_device))
@@ -66,12 +67,12 @@ class VAEXperiment(pl.LightningModule):
         return train_loss['loss']
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
-        imu, gt = batch  # (b, tw, n)
+        imu, gt = batch
         batch_size = self.trainer.datamodule.val_batch_size
 
         self.curr_device = imu.device
-        noise = self.noise_std * torch.randn((batch_size, self.h_in))  # m compressed measurements
         imu_flat = torch.squeeze(imu)
+        noise = torch.normal(mean=0, std=self.noise_std, size=[batch_size, self.h_in])
         y_batch = matmul_A(imu_flat, self.A.to(self.curr_device), noise.to(self.curr_device))
         y_batch = y_batch.to(self.curr_device)
 
@@ -86,22 +87,6 @@ class VAEXperiment(pl.LightningModule):
     def on_validation_end(self) -> None:
         self.sample_data()
 
-    def get_mse(self, x, y):
-        mse = ((x - y)**2).mean(axis=None)  # # (b, h_out)
-        return mse
-
-    def save_fig(self, filename):
-        plt.savefig(filename)
-        plt.close()
-
-    def normalize_data(self, x, normalize=True):
-        if normalize:
-            ori_scaler = self.trainer.datamodule.train_dataset.ori_scaler
-            x_ = Tensor(ori_scaler.transform(x))
-        else:
-            x_ = x
-        return x_
-
     def sample_data(self):
         # Get sample reconstruction data
         test_samples_list = list(iter(self.trainer.datamodule.test_dataloader()))
@@ -110,8 +95,8 @@ class VAEXperiment(pl.LightningModule):
         imu, _ = test_samples_list[random_idx]  # [b, 1, h_out]
         batch_size = self.trainer.datamodule.val_batch_size
 
-        noise = self.noise_std * torch.randn((batch_size, self.h_in))  # m compressed measurements
         imu_flat = torch.squeeze(imu)
+        noise = torch.normal(mean=0, std=self.noise_std, size=[batch_size, self.h_in])
         y_batch = matmul_A(imu_flat.to(self.curr_device), self.A.to(self.curr_device), noise.to(self.curr_device))
         y_batch = y_batch.to(self.curr_device)
 
@@ -181,6 +166,14 @@ class VAEXperiment(pl.LightningModule):
                 return optims, scheds
         except:
             return
+
+    def get_mse(self, x, y):
+        mse = ((x - y)**2).mean(axis=None)  # # (b, h_out)
+        return mse
+
+    def save_fig(self, filename):
+        plt.savefig(filename)
+        plt.close()
 
     def load_model(self, path):
         self.model.load_state_dict(torch.load(path, map_location='cuda:0'), strict=False)

@@ -159,7 +159,7 @@ class CompSensDataset(LightningDataModule):
             self.validate_dataset,
             batch_size=self.val_batch_size,
             num_workers=self.num_workers,
-            shuffle=True,
+            shuffle=False,
             drop_last=True,
             pin_memory=self.pin_memory,
         )
