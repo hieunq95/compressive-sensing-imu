@@ -1,6 +1,5 @@
 model_params:
-  name: 'VanillaVAE'
-  in_channels: 1
+  name: 'DIPVAE'
   latent_dim: 10
   h_in: &h_in 120  # compress 24 - 48 - 72 - 120* - 144 - 168 - 192
   h_out: &h_out 204
@@ -16,8 +15,8 @@ data_params:
 
 
 exp_params:
-  LR: 0.0001
-  weight_decay: 0.05
+  LR: 0.00001
+  weight_decay: 0
   scheduler_gamma: 0.95
   kld_weight: 0.00001
   manual_seed: 1234
@@ -32,4 +31,4 @@ trainer_params:
 
 logging_params:
   save_dir: "logs/"
-  name: "VanillaVAE"
+  name: "DIPVAE"

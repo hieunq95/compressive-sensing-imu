@@ -15,6 +15,44 @@ def get_l2_norm(x, y):
     return np.mean(l2_norm_array)
 
 
+def get_imu_positions(h_in):
+    """" IMU map:
+        'head:': 0,
+        'spine2': 1,
+        'belly': 2,
+        'lchest': 3,
+        'rchest': 4,
+        'lshoulder': 5,
+        'rshoulder': 6,
+        'lelbow': 7,
+        'relbow': 8,
+        'lhip': 9,
+        'rhip': 10,
+        'lknee': 11,
+        'rknee': 12,
+        'lwrist': 13,
+        'rwrist': 14,
+        'lankle': 15,
+        'rankle': 16
+    """
+    if h_in == 24:
+        return [13, 14]
+    elif h_in == 48:
+        return [0, 1, 13, 14]
+    elif h_in == 72:
+        return [0, 1, 11, 12, 13, 14]
+    elif h_in == 96:
+        return [0, 1, 7, 8, 11, 12, 13, 14]
+    elif h_in == 120:
+        return [0, 1, 7, 8, 11, 12, 13, 14, 15, 16]
+    elif h_in == 144:
+        return [0, 1, 5, 6, 7, 8, 11, 12, 13, 14, 15, 16]
+    elif h_in == 168:
+        return [0, 1, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    else:
+        return [0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+
+
 def rot_matrix_to_aa(data):
     """
     Converts the orientation data given in rotation matrices to angle axis representation. `data' is expected in format

@@ -1,5 +1,7 @@
 import os
+import shutil
 import argparse
+import math
 import yaml
 import threading
 import pytorch_lightning as pl
@@ -8,10 +10,9 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-torch.manual_seed(1234)
 from pathlib import Path
-from vae import ConvoVAE, BaseVAE, MyVAE
-from imu_utils import matmul_A
+from vae import BaseVAE, DIPVAE
+from imu_utils import get_imu_positions
 from dataset import CompSensDataset
 from torch import Tensor
 from torch import optim
@@ -21,47 +22,63 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.plugins import DDPPlugin
 
 
-class VAEXperiment(pl.LightningModule):
+class DIPExperiment(pl.LightningModule):
     def __init__(self,
                  vae_model: BaseVAE,
                  params: dict) -> None:
-        super(VAEXperiment, self).__init__()
+        super(DIPExperiment, self).__init__()
         self.model = vae_model
         self.params = params
-        # h_in * w_in = 102
-        self.h_in = 17
-        self.w_in = self.params['h_in'] // self.h_in  # 6
-        # h_out * w_out = 204
-        self.h_out = 17
-        self.w_out = self.params['h_out'] // self.h_out  # 12
+        self.h_in = self.params['h_in']
+        self.h_out = self.params['h_out']
         self.curr_device = None
         self.hold_graph = False
-        self.m = self.h_in * self.w_in
-        self.n = self.h_out * self.w_out
-        self.A = 1 / self.m * torch.randn((self.n, self.m))
-        self.noise_std = 0.0
+        self.P_T = self.params['P_T']
+        self.noise_std = self.params['eta']
         self.compress_loss = []
+        self.dip_positions = get_imu_positions(self.h_in)
         try:
             self.hold_graph = self.params['retain_first_backpass']
         except:
             pass
 
+    def get_input(self, x, positions, eta, P, device):
+        """
+        Input tensor x (b, h_out),
+        positions [0, 1, ...] - imu positions.
+        Return tensor y (b, h_in)
+        """
+        b = x.size()[0]
+        x_ori = torch.reshape(x, [b, 17, 12]).to(device)
+        y_ori = x_ori[:, positions, :]  # [b, 6, 12]
+        y = torch.reshape(y_ori, [b, self.h_in]).to(device)
+
+        # Power normalize and add noise
+        noise = torch.normal(mean=0, std=eta, size=[b, self.h_in]).to(device)
+        y_norm_i = torch.norm(y, p=2, dim=1).to(device)  # [1, b]
+        power = math.sqrt(self.h_in * P)
+        a = power / torch.reshape(y_norm_i, [b, 1]).to(device)
+        a = a.repeat(1, self.h_in).to(device)
+
+        y = a * y + noise
+
+        return y.to(device)
+
     def forward(self, input: Tensor, **kwargs) -> Tensor:
         return self.model(input, **kwargs)
 
     def training_step(self, batch, batch_idx, optimizer_idx=0):
-        # TODO: Normalize data here instead of dataloader
-        imu, _ = batch  # [b, 1, h_out, w_out]
+        imu, _ = batch  # (b, 1, h_out)
         batch_size = self.trainer.datamodule.train_batch_size
 
         self.curr_device = imu.device
-        noise = self.noise_std * torch.randn((batch_size, 1, self.h_in, self.w_in))  # m compressed measurements
-        y_batch = matmul_A(imu.cpu().data, self.A, noise)
-        y_batch = y_batch.to(self.curr_device)
+        imu_flat = torch.squeeze(imu)  # (b, h_out), h_out = 204 ~ 17 sensors
+        y_batch = self.get_input(imu_flat, self.dip_positions, self.noise_std, self.P_T, self.curr_device)
 
-        results = self.forward(y_batch, A=self.A.to(self.curr_device))
+        imu_positions = torch.from_numpy(np.array(self.dip_positions)).to(self.curr_device)
+        results = self.forward(y_batch, positions=imu_positions)
         train_loss = self.model.loss_function(*results,
-                                              M_N=self.params['kld_weight'],  # al_img.shape[0]/ self.num_train_imgs,
+                                              M_N=self.params['kld_weight']*batch_size,
                                               optimizer_idx=optimizer_idx,
                                               batch_idx=batch_idx)
 
@@ -70,17 +87,17 @@ class VAEXperiment(pl.LightningModule):
         return train_loss['loss']
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
-        imu, gt = batch  # (b, tw, n)
+        imu, gt = batch
         batch_size = self.trainer.datamodule.val_batch_size
 
         self.curr_device = imu.device
-        noise = self.noise_std * torch.randn((batch_size, 1, self.h_in, self.w_in))
-        y_batch = matmul_A(imu.cpu().data, self.A, noise)
-        y_batch = y_batch.to(self.curr_device)
+        imu_flat = torch.squeeze(imu)  # (b, h_out), h_out = 204 ~ 17 sensors
+        y_batch = self.get_input(imu_flat, self.dip_positions, self.noise_std, self.P_T, self.curr_device)
 
-        results = self.forward(y_batch, A=self.A.to(self.curr_device))
+        imu_positions = torch.from_numpy(np.array(self.dip_positions)).to(self.curr_device)
+        results = self.forward(y_batch, positions=imu_positions)
         val_loss = self.model.loss_function(*results,
-                                            M_N=self.params['kld_weight'],  # real_img.shape[0]/ self.num_val_imgs,
+                                            M_N=self.params['kld_weight']*batch_size,
                                             optimizer_idx=optimizer_idx,
                                             batch_idx=batch_idx)
 
@@ -89,49 +106,29 @@ class VAEXperiment(pl.LightningModule):
     def on_validation_end(self) -> None:
         self.sample_data()
 
-    def get_l2_norm(self, x, y):
-        l2_norm_array = np.power(np.subtract(x, y), 2)
-        return torch.mean(l2_norm_array)
-
-    def save_fig(self, filename):
-        plt.savefig(filename)
-        plt.close()
-
-    def normalize_data(self, x, normalize=True):
-        if normalize:
-            ori_scaler = self.trainer.datamodule.train_dataset.ori_scaler
-            x_ = Tensor(ori_scaler.transform(x))
-        else:
-            x_ = x
-        return x_
-
     def sample_data(self):
         # Get sample reconstruction data
         test_samples_list = list(iter(self.trainer.datamodule.test_dataloader()))
         nb_test_samples = len(test_samples_list)
         random_idx = np.random.choice(nb_test_samples)
-        test_imu, _ = test_samples_list[random_idx]  # [b, 1, h_out, tw]
-        batch_size = self.trainer.datamodule.val_batch_size
+        imu, _ = test_samples_list[random_idx]  # [b, 1, h_out]
 
-        noise = self.noise_std * torch.randn((batch_size, 1, self.h_in, self.w_in))
-        y_batch = matmul_A(test_imu.cpu().data, self.A, noise)
-        y_batch = y_batch.to(self.curr_device)
+        imu_flat = torch.squeeze(imu)  # (b, h_out), h_out = 204 ~ 17 sensors
+        y_batch = self.get_input(imu_flat, self.dip_positions, self.noise_std, self.P_T, self.curr_device)
+        imu_positions = torch.from_numpy(np.array(self.dip_positions)).to(self.curr_device)
+        recons = self.forward(y_batch, positions=imu_positions)[0]
+        recons = recons.cpu().data
+        labels = torch.squeeze(imu).cpu().data
 
-        recons = self.model.generate(y_batch, A=self.A)
-        recons = recons.cpu().data  # (b, 1, h_out, w_out)
-        labels = test_imu.cpu().data  # (b, 1, h_out, w_out)
-
-        cs_loss = self.get_l2_norm(recons, labels)
+        cs_loss = self.get_mse(recons, labels)
         self.compress_loss.append(cs_loss)
 
         fname = os.path.join(self.logger.log_dir, "Reconstructions",
                              f"{self.logger.name}_Epoch_{self.current_epoch}.png")
 
         figure, (ax1, ax2) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [2, 1]})
-        recons_plot = np.reshape(recons, [batch_size, self.h_out * self.w_out])
-        labels_plot = np.reshape(labels, [batch_size, self.h_out * self.w_out])
-        ax1.plot(recons_plot[0, :], linestyle='--', label='Recons')
-        ax1.plot(labels_plot[0, :], linestyle='-', label='Labels')
+        ax1.plot(recons[0, :], linestyle='--', label='Recons')
+        ax1.plot(labels[0, :], linestyle='-', label='Labels')
 
         ax1.set_title('Real-time prediction')
         ax1.set_xlabel('Frame')
@@ -186,13 +183,21 @@ class VAEXperiment(pl.LightningModule):
         except:
             return
 
+    def get_mse(self, x, y):
+        mse = ((x - y)**2).mean(axis=None)  # # (b, h_out)
+        return mse
+
+    def save_fig(self, filename):
+        plt.savefig(filename)
+        plt.close()
+
     def load_model(self, path):
         self.model.load_state_dict(torch.load(path, map_location='cuda:0'), strict=False)
 
 
-def run(convo=False):
+def run():
     parser = argparse.ArgumentParser(description='Generic runner for VAE models')
-    config_file = 'configs/convvae.yaml' if convo else 'configs/vae.yaml'
+    config_file = 'configs/dip.yaml'
     parser.add_argument('--config', '-c',
                         dest="filename",
                         metavar='FILE',
@@ -208,10 +213,10 @@ def run(convo=False):
 
     tb_logger = TensorBoardLogger(save_dir=config['logging_params']['save_dir'],
                                   name=config['model_params']['name'],)
-    vae_models = {'ConvoVAE': ConvoVAE} if convo else {'VanillaVAE': MyVAE}
+    vae_models = {'DIPVAE': DIPVAE}
     model = vae_models[config['model_params']['name']](**config['model_params'])
     print(model)
-    experiment = VAEXperiment(model, config['exp_params'])
+    experiment = DIPExperiment(model, config['exp_params'])
     data = CompSensDataset(**config["data_params"], pin_memory=len(config['trainer_params']['gpus']) != 0)
     data.setup()
     runner = Trainer(logger=tb_logger,
@@ -225,10 +230,12 @@ def run(convo=False):
 
     Path(f"{tb_logger.log_dir}/Samples").mkdir(exist_ok=True, parents=True)
     Path(f"{tb_logger.log_dir}/Reconstructions").mkdir(exist_ok=True, parents=True)
+    # Save config file
+    shutil.copyfile(config_file, os.path.join(tb_logger.log_dir, "config.yaml"))
 
     print(f"======= Training {config['model_params']['name']} =======")
     runner.fit(experiment, datamodule=data)
 
 
 if __name__ == '__main__':
-    run(convo=True)
+    run()

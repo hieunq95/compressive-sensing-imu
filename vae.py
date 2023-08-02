@@ -35,6 +35,106 @@ class BaseVAE(nn.Module):
         pass
 
 
+class DIPVAE(BaseVAE):
+    def __init__(self, latent_dim, h_in, h_out, eta, P_T, **kwargs) -> None:
+        super(DIPVAE, self).__init__()
+        self.latent_dim = latent_dim
+        self.h_in = h_in
+        self.h_out = h_out
+        self.noise_std = eta
+        self.P_T = P_T
+        self.h_dims = [64, 64]
+        torch.manual_seed(123)
+
+        encoder_layers = [
+            nn.Dropout(0.25),
+            nn.Linear(self.h_in, self.h_dims[0]),
+            nn.ReLU(),
+        ]
+
+        self.encoder = nn.Sequential(*encoder_layers)  # x -> encoder
+        self.fc_mu = nn.Linear(self.h_dims[0], self.latent_dim)  # encoder -> fc_mu
+        self.fc_var = nn.Linear(self.h_dims[0], self.latent_dim)  # encoder -> fc_var
+
+        decoder_layers = [
+            nn.Linear(self.latent_dim, self.h_dims[1]),
+            nn.ReLU(),
+            nn.Dropout(0.25),
+            nn.Linear(self.h_dims[1], self.h_out),
+            nn.Tanh()
+        ]
+
+        self.decoder = nn.Sequential(*decoder_layers)  # decoder_input -> decoder -> x_hat
+
+    def vector_reduction(self, x, positions, device):
+        b = x.size()[0]
+        x_ori = torch.reshape(x, [b, 17, 12]).to(device)
+        y_ori = x_ori[:, positions.tolist(), :]  # [b, 6, 12]
+        y = torch.reshape(y_ori, [b, self.h_in]).to(device)
+        # Power normalize
+        y_norm_i = torch.norm(y, p=2, dim=1).to(device)  # [1, b]
+        power = math.sqrt(self.h_in * self.P_T)
+        a = power / torch.reshape(y_norm_i, [b, 1]).to(device)
+        a = a.repeat(1, self.h_in).to(device)
+        y = a * y
+
+        return x, y
+
+    def encode(self, input: Tensor) -> List[Tensor]:
+        result = self.encoder(input)
+        mu = self.fc_mu(result)
+        log_var = self.fc_var(result)
+
+        return [mu, log_var]
+
+    def decode(self, z: Tensor) -> Tensor:
+        result = self.decoder(z)
+
+        return result
+
+    def reparameterize(self, mu: Tensor, logvar: Tensor) -> Tensor:
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return eps * std + mu
+
+    def forward(self, input: Tensor, **kwargs) -> List[Tensor]:
+        mu, log_var = self.encode(input)
+        z = self.reparameterize(mu, log_var)
+        x_hat = self.decode(z)
+        positions = kwargs['positions']
+
+        return [x_hat, input, mu, log_var, positions]
+
+    def loss_function(self,
+                      *args,
+                      **kwargs) -> dict:
+        recons = args[0]  # (b, h_out)
+        input = args[1]  # (b, h_in)
+        mu = args[2]
+        log_var = args[3]
+        positions = args[4]
+
+        kld_weight = kwargs['M_N']
+        recons, reduced_recons = self.vector_reduction(recons, positions, recons.device)
+        recons_loss = F.mse_loss(reduced_recons, input, reduction='sum')
+        kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)
+        loss = recons_loss + kld_weight * kld_loss
+
+        return {'loss': loss, 'Reconstruction_Loss': recons_loss.detach(), 'KLD': -kld_loss.detach()}
+
+    def sample(self, num_samples: int, current_device: int, **kwargs) -> Tensor:
+        z = torch.randn(num_samples,
+                        self.latent_dim)
+
+        z = z.to(current_device)
+
+        samples = self.decode(z)
+        return samples
+
+    def generate(self, x: Tensor, **kwargs) -> Tensor:
+        return self.forward(x, **kwargs)[0]
+
+
 class SMPLVAE(BaseVAE):
     def __init__(self,
                  in_channels: int,
