@@ -1,6 +1,7 @@
 import os
 import time
 import math
+import pickle as pkl
 import yaml
 import smplx
 import pyrender
@@ -16,7 +17,7 @@ from vae import SMPLVAE, MyVAE, DIPVAE
 from train_mlp_vae import VAEXperiment
 from train_dip import DIPExperiment
 from dataset import IMUDataset
-from imu_utils import matmul_A, plot_reconstruction_data, get_l2_norm, get_imu_positions
+from imu_utils import matmul_A, plot_reconstruction_data, get_l2_norm, get_imu_positions, rot_matrix_to_aa
 from sklearn.linear_model import Lasso
 
 # matplotlib parameters
@@ -57,12 +58,21 @@ def clear_scene(scene):
     return scene
 
 
-def body_from_vertices(vertices, faces, key_frame=False, animation=False):
-    # vertices.shape: (1075, 6890, 3)
-    if key_frame:
+def body_from_vertices(vertices, faces, key_frame=False, animation=False, color=None):
+    if color == 'gt':
         mesh_color = [255.0 / 255, 51.0 / 255, 51.0 / 255]
-    else:
+    elif color == 'vae':
         mesh_color = [224.0 / 255, 224.0 / 255, 225.0 / 255]
+    elif color == 'lasso':
+        mesh_color = [51.0 / 255, 153.0 / 255, 255.0 / 255]
+    elif color == 'dip':
+        mesh_color = [255.0 / 255, 153.0 / 255, 255.0 / 255]
+    else:
+        if key_frame:
+            mesh_color = [255.0 / 255, 51.0 / 255, 51.0 / 255]
+        else:
+            mesh_color = [224.0 / 255, 224.0 / 255, 225.0 / 255]
+
     seq_len = vertices.shape[0]
     scene = pyrender.Scene()
     mesh = trimesh.Trimesh(vertices=vertices[0], faces=faces, vertex_colors=[mesh_color] * len(vertices[0]))
@@ -88,8 +98,7 @@ def body_from_vertices(vertices, faces, key_frame=False, animation=False):
             scene = clear_scene(scene)
             scene.add(mesh_node, name='mesh')
             viewer.render_lock.release()
-
-            i += 1
+            t += 1
         else:
             mesh = trimesh.Trimesh(vertices=vertices[i], faces=faces, vertex_colors=[mesh_color] * len(vertices[i]))
             mesh_node = pyrender.Mesh.from_trimesh(mesh)
@@ -99,20 +108,107 @@ def body_from_vertices(vertices, faces, key_frame=False, animation=False):
             scene.add(mesh_node, name='mesh')
             viewer.render_lock.release()
 
-            # i += 0.01
 
-
-def smpl_forward(imu, gt, vae_model, body_model, key_frame=False, animation=False):
+def smpl_forward(imu, gt, vae_model, body_model, key_frame=False, animation=False, color=None):
     pose = vae_model(imu, labels=gt)[0]  # [b, 1, 72]
 
     faces = body_model.faces
     batsz = pose.shape[0]
     vts, jts = model_forward(body_model, pose, batsz)
     # Visualize
-    body_from_vertices(vts, faces, key_frame, animation)
+    body_from_vertices(vts, faces, key_frame, animation, color)
 
 
-def eval_models(vae_ver=0, spml_vae_ver=0, batch_size=60, batch_start=0, batch_end=1, animation=False):
+def reconstruct_pose(vae_ver=0, smpl_vae_ver=0, batch_size=60, batch_id=0):
+    vae_config_fname = 'logs/VanillaVAE/version_{}/config.yaml'.format(vae_ver)
+    dip_config_fname = 'logs/DIPVAE/version_{}/config.yaml'.format(vae_ver)
+    smpl_vae_config_fname = 'configs/smplvae.yaml'
+    A_fname = 'logs/VanillaVAE/version_{}/A.pt'.format(vae_ver)
+    with open(vae_config_fname, 'r') as f_2:
+        try:
+            config_vae = yaml.safe_load(f_2)
+        except yaml.YAMLError as exc:
+            print(exc)
+    with open(dip_config_fname, 'r') as f_2:
+        try:
+            config_dip = yaml.safe_load(f_2)
+        except yaml.YAMLError as exc:
+            print(exc)
+    with open(smpl_vae_config_fname, 'r') as f_1:
+        try:
+            config_smpl_vae = yaml.safe_load(f_1)
+        except yaml.YAMLError as exc:
+            print(exc)
+
+        # load body model
+    bm_fname = '/home/hinguyen/Data/smpl/models/smpl_male.pkl'
+    body_model = smplx.create(model_path=bm_fname, model_type='smpl', gender='male', dtype=torch.float64)
+    print('Model: {}'.format(body_model))
+
+    # load SMPL_VAE model
+    smpl_vae_model = SMPLVAE(**config_smpl_vae['model_params'])
+    smpl_trained_fname = os.path.join(config_smpl_vae['logging_params']['save_dir'],
+                                      config_smpl_vae['model_params']['name'], 'version_{}'.format(smpl_vae_ver),
+                                      'checkpoints', 'last.ckpt')
+
+    smpl_exp = SMPLexperiment(smpl_vae_model, config_smpl_vae['exp_params'])
+    smpl_vae_model = smpl_exp.load_from_checkpoint(smpl_trained_fname, vae_model=smpl_vae_model,
+                                                   params=config_smpl_vae['exp_params'])
+    smpl_vae_model.eval()
+
+    # load VAE model
+    vae_model = MyVAE(**config_vae['model_params'])
+    vae_trained_fname = os.path.join(config_vae['logging_params']['save_dir'],
+                                     config_vae['model_params']['name'], 'version_{}'.format(vae_ver),
+                                     'checkpoints', 'last.ckpt')
+    exp_vae = VAEXperiment(vae_model, config_vae['exp_params'])
+    vae_model = exp_vae.load_from_checkpoint(vae_trained_fname, vae_model=vae_model, params=config_vae['exp_params'])
+    vae_model.eval()
+    # load DIP model
+    dip_model = DIPVAE(**config_dip['model_params'])
+    dip_trained_fname = os.path.join(config_dip['logging_params']['save_dir'],
+                                     config_dip['model_params']['name'], 'version_{}'.format(vae_ver),
+                                     'checkpoints', 'last.ckpt')
+    exp_dip = DIPExperiment(dip_model, config_dip['exp_params'])
+    dip_model = exp_dip.load_from_checkpoint(dip_trained_fname, vae_model=dip_model, params=config_dip['exp_params'])
+    dip_model.eval()
+
+    # test model with test dataset
+    file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/'
+    test_dataset = IMUDataset(file_path, mode='test', transform=None)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
+    test_len = len(test_dataset)
+    print('Number of batches: {} -- version: {}'.format(test_len // batch_size, vae_ver))
+
+    # VAE parameters
+    A = torch.load(A_fname)
+    m = exp_vae.h_in
+    n = exp_vae.h_out
+
+    # Lasso parameter
+    lasso = Lasso(alpha=0.0001, tol=1e-4)
+
+    (imu, gt) = list(iter(test_loader))[batch_id]
+    noise = torch.normal(mean=0, std=exp_vae.noise_std, size=[batch_size, m])
+    y_batch = matmul_A(torch.squeeze(imu), A, noise)
+    y_dip = dip_model.get_input(torch.squeeze(imu), exp_dip.dip_positions, exp_dip.noise_std, exp_dip.P_T, imu.device)
+
+    # Reconstructed data
+    recons_vae = vae_model(y_batch, A=A)[0]
+    recons_dip = dip_model(y_dip, positions=exp_dip.dip_positions)[0]
+    lasso.fit(X=A, y=y_batch.cpu().detach().numpy().T)
+    recons_lasso = lasso.coef_.reshape([batch_size, n])
+    recons_lasso = torch.Tensor(recons_lasso)
+
+    # Ground truth pose
+    smpl_forward(torch.squeeze(imu), torch.squeeze(gt), smpl_vae_model, body_model, False, False, 'gt')
+    # Reconstructed pose
+    smpl_forward(recons_vae, torch.squeeze(gt), smpl_vae_model, body_model, False, False, 'vae')
+    smpl_forward(recons_lasso, torch.squeeze(gt), smpl_vae_model, body_model, False, False, 'lasso')
+    smpl_forward(recons_dip, torch.squeeze(gt), smpl_vae_model, body_model, False, False, 'dip')
+
+
+def latent_interpolation(vae_ver=0, spml_vae_ver=0, batch_size=60, batch_start=0, batch_end=1):
     matplotlib.use('TkAgg')
     smpl_vae_config_fname = 'configs/smplvae.yaml'
     vae_config_fname = 'logs/VanillaVAE/version_{}/config.yaml'.format(vae_ver)
@@ -168,7 +264,6 @@ def eval_models(vae_ver=0, spml_vae_ver=0, batch_size=60, batch_start=0, batch_e
 
     # test VAE model with reconstructed data
     A = torch.load(A_fname)
-    print('A: {}'.format(A))
     m = vae_exp.h_in
     # first key frame
     imu_flat_start = torch.squeeze(imu_start)
@@ -182,13 +277,13 @@ def eval_models(vae_ver=0, spml_vae_ver=0, batch_size=60, batch_start=0, batch_e
     z_1 = vae_model.model.reparameterize(z_1[0], z_1[1])
     z_2 = vae_model.model.encode(y_batch_end)
     z_2 = vae_model.model.reparameterize(z_2[0], z_2[1])
-    smpl_forward(vae_exp.model.decode(z_1), torch.squeeze(gt_start), smpl_vae_model, body_model, True, animation)
-    smpl_forward(vae_exp.model.decode(z_2), torch.squeeze(gt_end), smpl_vae_model, body_model, True, animation)
+    smpl_forward(vae_exp.model.decode(z_1), torch.squeeze(gt_start), smpl_vae_model, body_model, True)
+    smpl_forward(vae_exp.model.decode(z_2), torch.squeeze(gt_end), smpl_vae_model, body_model, True)
     # interpolation
     z_range = np.linspace(0.0, 1.0, num=10)
     for alpha in z_range:
         z = alpha * z_2 + (1 - alpha) * z_1
-        smpl_forward(vae_exp.model.decode(z), torch.squeeze(gt_start), smpl_vae_model, body_model, False, animation)
+        smpl_forward(vae_exp.model.decode(z), torch.squeeze(gt_start), smpl_vae_model, body_model, False)
 
     # Visualize the ground truth
     # pose = torch.reshape(gt_start, [batch_size, 72])
@@ -198,54 +293,6 @@ def eval_models(vae_ver=0, spml_vae_ver=0, batch_size=60, batch_start=0, batch_e
     # vts, jts = model_forward(body_model, pose, batsz)
     # # Visualize
     # body_from_vertices(vts, faces, animation)
-
-
-def eval_vae(vae_ver=0, batch_size=64, batch_id=0, imu_start=0, imu_end=1):
-    # load Convo_VAE model
-    vae_config_fname = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/' \
-                       'logs/VanillaVAE/version_{}/config.yaml'.format(vae_ver)
-    A_fname = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/' \
-              'logs/VanillaVAE/version_{}/A.pt'.format(vae_ver)
-    with open(vae_config_fname, 'r') as f_2:
-        try:
-            config_vae = yaml.safe_load(f_2)
-        except yaml.YAMLError as exc:
-            print(exc)
-    # load VAE model
-    vae_model = MyVAE(**config_vae['model_params'])
-    conv_trained_fname = os.path.join(config_vae['logging_params']['save_dir'],
-                                      config_vae['model_params']['name'], 'version_{}'.format(vae_ver),
-                                      'checkpoints', 'last.ckpt')
-    exp2 = VAEXperiment(vae_model, config_vae['exp_params'])
-    vae_model = exp2.load_from_checkpoint(conv_trained_fname, vae_model=vae_model,
-                                          params=config_vae['exp_params'])
-    vae_model.eval()
-    # test_loader = exp2.trainer.datamodule.test_dataloader()
-
-    # test model with test dataset
-    file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/'
-    test_dataset = IMUDataset(file_path, mode='test', transform=None)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
-
-    test_len = len(list(iter(test_loader)))
-    print('Number of batches: {}'.format(test_len))
-    e = list(iter(test_loader))[batch_id]
-
-    # e = next(iter(test_examples))
-    imu, gt = e
-
-    # test ConvoVAE model with reconstructed data
-    A = torch.load(A_fname)
-    m = exp2.h_in
-    P_T = exp2.P_T
-    imu_flat = torch.squeeze(imu)
-    # (b, h_out) * (h_out, h_in) + (b, h_in) -> (b, h_in)
-    y_batch = matmul_A(imu_flat, A)
-    recons = vae_model(y_batch, A=A)[0]  # [b, h_out]
-    dir_name = '/home/hinguyen/Data/PycharmProjects/compressive-sensing-imu/logs/VanillaVAE/version_{}'\
-        .format(vae_ver)
-    plot_reconstruction_data(recons.cpu().data.detach().numpy(), imu_flat.cpu().data.detach().numpy(),
-                             imu_start, imu_end, dir_name)
 
 
 def eval_smpl_vae(smpl_vae_ver=0, batch_id=0):
@@ -279,7 +326,7 @@ def eval_smpl_vae(smpl_vae_ver=0, batch_id=0):
     body_model = smplx.create(model_path=bm_fname, model_type='smpl', gender='male', dtype=torch.float64)
     print('Model: {}'.format(body_model))
 
-    smpl_forward(torch.squeeze(imu), torch.squeeze(gt), model, body_model, True)
+    smpl_forward(torch.squeeze(imu), torch.squeeze(gt), model, body_model, False, True)
 
     # Visualize the ground truth
     pose = torch.reshape(gt, [batch_size, 72])
@@ -287,10 +334,10 @@ def eval_smpl_vae(smpl_vae_ver=0, batch_id=0):
     faces = body_model.faces
     vts, jts = model_forward(body_model, pose, batsz)
     # Visualize
-    body_from_vertices(vts, faces, True)
+    body_from_vertices(vts, faces, False, True)
 
 
-def eval_decoding_time(vae_ver=0, batch_sizes=[60], lasso_a=0.1, log_interval=10, plot=False):
+def eval_decoding_time(vae_ver=0, batch_sizes=[60], lasso_a=0.0001, log_interval=100, plot=False):
     vae_config_fname = 'logs/VanillaVAE/version_{}/config.yaml'.format(vae_ver)
     dip_config_fname = 'logs/DIPVAE/version_{}/config.yaml'.format(vae_ver)
     A_fname = 'logs/VanillaVAE/version_{}/A.pt'.format(vae_ver)
@@ -419,7 +466,7 @@ def eval_decoding_time(vae_ver=0, batch_sizes=[60], lasso_a=0.1, log_interval=10
         np.savez(saved_file, vae_time=vae_time, lasso_time=lasso_time, dip_time=dip_time)
 
 
-def eval_baselines(vae_ver=0, batch_size=60, lasso_a=0.1, log_interval=10):
+def eval_baselines(vae_ver=0, batch_size=60, lasso_a=0.0001, log_interval=10):
     """
     Use to evaluate the baselines with metric is either 'mn' or 'csnr'. With metric 'time', use 'eval_decoding_time'
     instead
@@ -581,6 +628,79 @@ def plot_results(vae_vers=[0], metric='mn'):
     plt.show()
 
 
+def plot_imu_readings(subject='s_03/05', sensor='imu_ori', start_time=0, end_time=4, imu_position=8):
+    matplotlib.use('TkAgg')
+    file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/DIP_IMU/{}.pkl'.format(subject)
+    data = pkl.load(open(file_path, 'rb'), encoding='latin1')[sensor]
+    keys = pkl.load(open(file_path, 'rb'), encoding='latin1').keys()
+    print(keys)
+    print('data.shape: {}'.format(data.shape))
+
+    seq_len = data.shape[0]
+    sampling_rate = 60
+    if end_time >= int(seq_len / sampling_rate):
+        end_time = int(seq_len / sampling_rate)
+
+    t = np.arange(0, seq_len / sampling_rate, 1 / sampling_rate)
+    if sensor == 'imu_acc':
+        y = data[:, imu_position, :]
+    else:
+        y = rot_matrix_to_aa(np.reshape(data, [seq_len, 17 * 9]))
+    print('t: {}'.format(t.shape))
+    print('y: {}'.format(y.shape))
+    t_display = t[start_time * sampling_rate: end_time * sampling_rate]
+    y_display = y[start_time * sampling_rate: end_time * sampling_rate]
+    plt.subplots(figsize=(6, 2))
+    if sensor == 'imu_acc':
+        plt.plot(t_display, y_display[:, 0], label='X', linewidth=line_width)
+        plt.plot(t_display, y_display[:, 1], label='Y', linewidth=line_width)
+        plt.plot(t_display, y_display[:, 2], label='Z', linewidth=line_width)
+        plt.ylabel('Acceleration', fontsize=font_size)
+    else:
+        plt.plot(t_display, y_display[:, imu_position], label='X', linewidth=line_width)
+        plt.plot(t_display, y_display[:, imu_position+1], label='Y', linewidth=line_width)
+        plt.plot(t_display, y_display[:, imu_position+2], label='Z', linewidth=line_width)
+        plt.ylabel('Orientation', fontsize=font_size)
+    plt.legend()
+    # plt.grid(linestyle='--')
+    plt.xlabel('Time (s)', fontsize=font_size)
+    plt.xticks(fontsize=xtick_size)
+    plt.yticks(fontsize=ytick_size)
+    # plt.title('IMU ID: {}'.format(imu_position))
+    plt.subplots_adjust(left=0.16,
+                        bottom=0.3,
+                        right=0.97,
+                        top=0.95,
+                        wspace=0.2,
+                        hspace=0.255)
+    plt.show()
+
+
+def visualize_pose(subject='s_03/05'):
+    file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/DIP_IMU/{}.pkl'.format(subject)
+    bm_fname = '/home/hinguyen/Data/smpl/models/smpl_male.pkl'
+
+    data = pkl.load(open(file_path, 'rb'), encoding='latin1')
+    # 'gt' (ground truth) has 23 joints -> (23+1)*3 pose parameters
+    output = data['gt']
+    print(data.keys())
+    print('output.shape: {}'.format(output.shape))
+
+    bm = smplx.create(model_path=bm_fname, model_type='smpl', gender='male', dtype=torch.float64)
+    faces = bm.faces
+    print('Model: {}'.format(bm))
+
+    # get pose and joint parameters from the IMU data, shape (seq_length, 17, 3, 3) -> (127,3)?
+    pose = torch.from_numpy(output.reshape(-1, 72))
+    print('pose.shape: {}'.format(pose.shape))
+    batsz = pose.shape[0]
+    vts, jts = model_forward(bm, pose, batsz)
+    print('jts.shape: {}'.format(jts.shape))
+    # Visualize
+    body_from_vertices(vts, faces, False, True)
+    # body_from_joints(joints=jts)
+
+
 if __name__ == '__main__':
     # IMU map:
     imu_map = {
@@ -602,9 +722,20 @@ if __name__ == '__main__':
         'lankle': 15,
         'rankle': 16
     }
-    # eval_vae(vae_ver=169, batch_size=60, batch_id=156, imu_start=imu_map['lwrist'], imu_end=imu_map['rwrist'])
-    # eval_models(vae_ver=99, spml_vae_ver=24, batch_size=60, batch_start=222, batch_end=446, animation=False)
-    # eval_smpl_vae(smpl_vae_ver=24, batch_id=99)
+    # Visualize IMU data
+    plot_imu_readings(subject='s_03/04', sensor='imu_ori', start_time=0, end_time=10, imu_position=imu_map['lwrist'])
+    visualize_pose(subject='s_03/04')
+
+    # Visualize pretrained SMPL-VAE model
+    eval_smpl_vae(smpl_vae_ver=24, batch_id=99)
+
+    # Evaluate baseline algorithms before plotting results
     # eval_baselines(vae_ver=4, batch_size=60, lasso_a=0.0001, log_interval=100)
-    # eval_decoding_time(vae_ver=6, batch_sizes=[60, 120, 180, 240, 300, 360, 420], lasso_a=0.0001, log_interval=100, plot=True)
+    # eval_decoding_time(vae_ver=6, batch_sizes=[60, 120, 180, 240, 300, 360, 420], plot=False)
+
+    # Plot results
+    reconstruct_pose(vae_ver=4, smpl_vae_ver=24, batch_size=6, batch_id=890)  # 890,  1111, 4440
+    latent_interpolation(vae_ver=99, spml_vae_ver=24, batch_size=60, batch_start=222, batch_end=446)
+    plot_results(vae_vers=[k for k in range(0, 7)], metric='mn')
     plot_results(vae_vers=[k for k in range(7, 14)], metric='csnr')
+    eval_decoding_time(vae_ver=6, batch_sizes=[60, 120, 180, 240, 300, 360, 420], plot=True)
