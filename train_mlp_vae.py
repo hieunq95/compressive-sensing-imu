@@ -59,6 +59,7 @@ class VAEXperiment(pl.LightningModule):
         results = self.forward(y_batch, A=self.A.to(self.curr_device))
         train_loss = self.model.loss_function(*results,
                                               M_N=self.params['kld_weight']*batch_size,
+                                              g_z=self.params['gz_weight']*batch_size,
                                               optimizer_idx=optimizer_idx,
                                               batch_idx=batch_idx)
 
@@ -79,6 +80,7 @@ class VAEXperiment(pl.LightningModule):
         results = self.forward(y_batch, A=self.A.to(self.curr_device))
         val_loss = self.model.loss_function(*results,
                                             M_N=self.params['kld_weight']*batch_size,
+                                            g_z=self.params['gz_weight'] * batch_size,
                                             optimizer_idx=optimizer_idx,
                                             batch_idx=batch_idx)
 

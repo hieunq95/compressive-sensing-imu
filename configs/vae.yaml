@@ -17,9 +17,10 @@ data_params:
 
 exp_params:
   LR: 0.0001
-  weight_decay: 0.05
+  weight_decay: 0.0
   scheduler_gamma: 0.95
   kld_weight: 0.00001
+  gz_weight: 0.0001
   manual_seed: 1234
   h_in: *h_in
   h_out: *h_out

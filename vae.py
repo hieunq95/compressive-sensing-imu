@@ -313,11 +313,13 @@ class MyVAE(BaseVAE):
         log_var = args[3]
         A = args[4]  # (h_in, h_out)
 
+        gz_loss = torch.norm(recons, p=1)  # L_1 regularizer
+        gz_weight = kwargs['g_z']
         kld_weight = kwargs['M_N']  # Account for the minibatch samples from the dataset
         recons = matmul_A(recons, A)
         recons_loss = F.mse_loss(recons, input, reduction='sum')
         kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)
-        loss = recons_loss + kld_weight * kld_loss
+        loss = recons_loss + kld_weight * kld_loss + gz_weight * gz_loss
 
         return {'loss': loss, 'Reconstruction_Loss': recons_loss.detach(), 'KLD': -kld_loss.detach()}
 

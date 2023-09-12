@@ -27,6 +27,8 @@ xtick_size = 14
 ytick_size = 14
 line_width = 2
 
+file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/'
+bm_fname = '/home/hinguyen/Data/smpl/models/smpl_male.pkl'
 
 def measure_loss(x, y):
     loss = F.mse_loss(x, y, reduction='sum')
@@ -141,7 +143,6 @@ def reconstruct_pose(vae_ver=0, smpl_vae_ver=0, batch_size=60, batch_id=0):
             print(exc)
 
         # load body model
-    bm_fname = '/home/hinguyen/Data/smpl/models/smpl_male.pkl'
     body_model = smplx.create(model_path=bm_fname, model_type='smpl', gender='male', dtype=torch.float64)
     print('Model: {}'.format(body_model))
 
@@ -174,7 +175,6 @@ def reconstruct_pose(vae_ver=0, smpl_vae_ver=0, batch_size=60, batch_id=0):
     dip_model.eval()
 
     # test model with test dataset
-    file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/'
     test_dataset = IMUDataset(file_path, mode='test', transform=None)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
     test_len = len(test_dataset)
@@ -227,7 +227,6 @@ def latent_interpolation(vae_ver=0, spml_vae_ver=0, batch_size=60, batch_start=0
             print(exc)
 
     # load body model
-    bm_fname = '/home/hinguyen/Data/smpl/models/smpl_male.pkl'
     body_model = smplx.create(model_path=bm_fname, model_type='smpl', gender='male', dtype=torch.float64)
     print('Model: {}'.format(body_model))
 
@@ -252,7 +251,6 @@ def latent_interpolation(vae_ver=0, spml_vae_ver=0, batch_size=60, batch_start=0
     vae_model.eval()
 
     # test models with test dataset
-    file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/'
     test_dataset = IMUDataset(file_path, mode='test', transform=None)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
     num_batches = len(list(iter(test_loader)))
@@ -312,7 +310,6 @@ def eval_smpl_vae(smpl_vae_ver=0, batch_id=0):
     model.eval()
     # test model with test dataset
     batch_size = 60
-    file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/'
     test_dataset = IMUDataset(file_path, mode='test', transform=None)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
     test_len = len(list(iter(test_loader)))
@@ -322,7 +319,6 @@ def eval_smpl_vae(smpl_vae_ver=0, batch_id=0):
     # e = next(iter(test_examples))
     imu, gt = e  # imu: (b, 1, 204), gt: [b, 1, 72]
     # load body model
-    bm_fname = '/home/hinguyen/Data/smpl/models/smpl_male.pkl'
     body_model = smplx.create(model_path=bm_fname, model_type='smpl', gender='male', dtype=torch.float64)
     print('Model: {}'.format(body_model))
 
@@ -430,7 +426,6 @@ def eval_decoding_time(vae_ver=0, batch_sizes=[60], lasso_a=0.0001, log_interval
         # DIP parameters
         dip_time = []
         # test model with test dataset
-        file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/'
         test_dataset = IMUDataset(file_path, mode='test', transform=None)
         test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
         for batch_id, (imu, gt) in enumerate(test_loader):
@@ -503,7 +498,6 @@ def eval_baselines(vae_ver=0, batch_size=60, lasso_a=0.0001, log_interval=10):
     dip_model.eval()
 
     # test model with test dataset
-    file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/'
     test_dataset = IMUDataset(file_path, mode='test', transform=None)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
     test_len = len(test_dataset)
@@ -630,9 +624,9 @@ def plot_results(vae_vers=[0], metric='mn'):
 
 def plot_imu_readings(subject='s_03/05', sensor='imu_ori', start_time=0, end_time=4, imu_position=8):
     matplotlib.use('TkAgg')
-    file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/DIP_IMU/{}.pkl'.format(subject)
-    data = pkl.load(open(file_path, 'rb'), encoding='latin1')[sensor]
-    keys = pkl.load(open(file_path, 'rb'), encoding='latin1').keys()
+    pkl_path = file_path + 'DIP_IMU/{}.pkl'.format(subject)
+    data = pkl.load(open(pkl_path, 'rb'), encoding='latin1')[sensor]
+    keys = pkl.load(open(pkl_path, 'rb'), encoding='latin1').keys()
     print(keys)
     print('data.shape: {}'.format(data.shape))
 
@@ -677,10 +671,8 @@ def plot_imu_readings(subject='s_03/05', sensor='imu_ori', start_time=0, end_tim
 
 
 def visualize_pose(subject='s_03/05'):
-    file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/DIP_IMU/{}.pkl'.format(subject)
-    bm_fname = '/home/hinguyen/Data/smpl/models/smpl_male.pkl'
-
-    data = pkl.load(open(file_path, 'rb'), encoding='latin1')
+    pkl_path = file_path + 'DIP_IMU/{}.pkl'.format(subject)
+    data = pkl.load(open(pkl_path, 'rb'), encoding='latin1')
     # 'gt' (ground truth) has 23 joints -> (23+1)*3 pose parameters
     output = data['gt']
     print(data.keys())
@@ -722,20 +714,25 @@ if __name__ == '__main__':
         'lankle': 15,
         'rankle': 16
     }
-    # Visualize IMU data
-    plot_imu_readings(subject='s_03/04', sensor='imu_ori', start_time=0, end_time=10, imu_position=imu_map['lwrist'])
-    visualize_pose(subject='s_03/04')
+    EVALUATION = False
+    # /--- ***** Part 1: Evaluate baseline algorithms before plotting results *******-------/
+    if EVALUATION:
+        for i in range(14):
+            eval_baselines(vae_ver=i, batch_size=60, lasso_a=0.0001, log_interval=100)  # version 0 to 13
+        eval_decoding_time(vae_ver=6, batch_sizes=[60, 120, 180, 240, 300, 360, 420], plot=False)
 
-    # Visualize pretrained SMPL-VAE model
-    eval_smpl_vae(smpl_vae_ver=24, batch_id=99)
+    # /--- ***** Part 2: Get simulation results after evaluation *******-------/
+    else:
+        # Visualize pretrained SMPL-VAE model
+        # Visualize IMU data
+        plot_imu_readings(subject='s_03/04', sensor='imu_ori', start_time=0, end_time=10, imu_position=imu_map['lwrist'])
+        visualize_pose(subject='s_03/04')
 
-    # Evaluate baseline algorithms before plotting results
-    # eval_baselines(vae_ver=4, batch_size=60, lasso_a=0.0001, log_interval=100)
-    # eval_decoding_time(vae_ver=6, batch_sizes=[60, 120, 180, 240, 300, 360, 420], plot=False)
+        eval_smpl_vae(smpl_vae_ver=24, batch_id=99)
 
-    # Plot results
-    reconstruct_pose(vae_ver=4, smpl_vae_ver=24, batch_size=6, batch_id=890)  # 890,  1111, 4440
-    latent_interpolation(vae_ver=99, spml_vae_ver=24, batch_size=60, batch_start=222, batch_end=446)
-    plot_results(vae_vers=[k for k in range(0, 7)], metric='mn')
-    plot_results(vae_vers=[k for k in range(7, 14)], metric='csnr')
-    eval_decoding_time(vae_ver=6, batch_sizes=[60, 120, 180, 240, 300, 360, 420], plot=True)
+        # Plot results
+        reconstruct_pose(vae_ver=4, smpl_vae_ver=24, batch_size=6, batch_id=890)  # 890,  1111, 4440
+        latent_interpolation(vae_ver=5, spml_vae_ver=24, batch_size=60, batch_start=222, batch_end=446)
+        plot_results(vae_vers=[k for k in range(0, 7)], metric='mn')
+        plot_results(vae_vers=[k for k in range(7, 14)], metric='csnr')
+        eval_decoding_time(vae_ver=6, batch_sizes=[60, 120, 180, 240, 300, 360, 420], plot=True)
