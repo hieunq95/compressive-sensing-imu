@@ -28,6 +28,10 @@ Note that we need to pre-process the dataset only once. From the second training
 to False for faster training.
 
 ##### 3.2. Training
+CPU and GPU training: modify parameter `gpus` in the yaml files. 
+For CPU training, the setting is `gpus: []`.
+For single GPU training, the setting is `gpus: [0]`.
+
 Run `train_mlp_vae.py` to train CS-VAE model.
 
 Run `train_smpl_vae.py` to train a VAE model for mapping IMU signals (204 features) to SMPL pose (72 features).
