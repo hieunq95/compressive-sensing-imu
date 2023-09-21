@@ -5,7 +5,7 @@ from dataset import IMUDataset
 from torch.utils.data import DataLoader
 from sklearn.linear_model import Lasso
 from scipy import ndimage, sparse
-from imu_utils import get_l2_norm
+from imu_utils import get_mean_loss
 
 
 def loss_fn(A, Y, z):
@@ -109,7 +109,7 @@ def lasso_sklearn():
 
     plt.plot(recons.T[0], '--', label='Recons')
     plt.plot(labels[0], label='Labels')
-    print('Recons loss: {}'.format(get_l2_norm(recons, labels)))
+    print('Recons loss: {}'.format(get_mean_loss(recons, labels)))
     plt.xlabel('Features')
     plt.ylabel('IMU reading')
     plt.legend()

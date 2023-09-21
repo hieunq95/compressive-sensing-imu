@@ -17,7 +17,7 @@ from vae import SMPLVAE, MyVAE, DIPVAE
 from train_mlp_vae import VAEXperiment
 from train_dip import DIPExperiment
 from dataset import IMUDataset
-from imu_utils import matmul_A, plot_reconstruction_data, get_l2_norm, get_imu_positions, rot_matrix_to_aa
+from imu_utils import matmul_A, plot_reconstruction_data, get_mean_loss, get_imu_positions, rot_matrix_to_aa
 from sklearn.linear_model import Lasso
 
 # matplotlib parameters
@@ -67,6 +67,8 @@ def body_from_vertices(vertices, faces, key_frame=False, animation=False, color=
         mesh_color = [224.0 / 255, 224.0 / 255, 225.0 / 255]
     elif color == 'lasso':
         mesh_color = [51.0 / 255, 153.0 / 255, 255.0 / 255]
+    elif color == 'lasso-opt':
+        mesh_color = [102.0 / 255, 255.0 / 255, 102.0 / 255]
     elif color == 'dip':
         mesh_color = [255.0 / 255, 153.0 / 255, 255.0 / 255]
     else:
@@ -121,7 +123,7 @@ def smpl_forward(imu, gt, vae_model, body_model, key_frame=False, animation=Fals
     body_from_vertices(vts, faces, key_frame, animation, color)
 
 
-def reconstruct_pose(vae_ver=0, smpl_vae_ver=0, batch_size=60, batch_id=0):
+def reconstruct_pose(vae_ver=0, smpl_vae_ver=0, batch_size=60, batch_id=0, l1_penalty=1e-5):
     vae_config_fname = 'logs/VanillaVAE/version_{}/config.yaml'.format(vae_ver)
     dip_config_fname = 'logs/DIPVAE/version_{}/config.yaml'.format(vae_ver)
     smpl_vae_config_fname = 'configs/smplvae.yaml'
@@ -181,30 +183,37 @@ def reconstruct_pose(vae_ver=0, smpl_vae_ver=0, batch_size=60, batch_id=0):
     print('Number of batches: {} -- version: {}'.format(test_len // batch_size, vae_ver))
 
     # VAE parameters
-    A = torch.load(A_fname)
     m = exp_vae.h_in
     n = exp_vae.h_out
+    A = torch.load(A_fname)
+    A_lasso_opt = torch.normal(mean=0, std=1/math.sqrt(m), size=[m, n])
 
     # Lasso parameter
-    lasso = Lasso(alpha=0.0001, tol=1e-4)
+    lasso_pow = Lasso(alpha=l1_penalty, tol=1e-3)
+    lasso_opt = Lasso(alpha=l1_penalty, tol=1e-3)
 
     (imu, gt) = list(iter(test_loader))[batch_id]
     noise = torch.normal(mean=0, std=exp_vae.noise_std, size=[batch_size, m])
     y_batch = matmul_A(torch.squeeze(imu), A, noise)
     y_dip = dip_model.get_input(torch.squeeze(imu), exp_dip.dip_positions, exp_dip.noise_std, exp_dip.P_T, imu.device)
+    y_lasso_opt = matmul_A(torch.squeeze(imu), A_lasso_opt, noise)
 
     # Reconstructed data
     recons_vae = vae_model(y_batch, A=A)[0]
     recons_dip = dip_model(y_dip, positions=exp_dip.dip_positions)[0]
-    lasso.fit(X=A, y=y_batch.cpu().detach().numpy().T)
-    recons_lasso = lasso.coef_.reshape([batch_size, n])
-    recons_lasso = torch.Tensor(recons_lasso)
+    lasso_pow.fit(X=A, y=y_batch.cpu().detach().numpy().T)
+    lasso_opt.fit(X=A_lasso_opt, y=y_lasso_opt.cpu().detach().numpy().T)
+    recons_lasso_pow = lasso_pow.coef_.reshape([batch_size, n])
+    recons_lasso_pow = torch.Tensor(recons_lasso_pow)
+    recons_lasso_opt = lasso_opt.coef_.reshape([batch_size, n])
+    recons_lasso_opt = torch.Tensor(recons_lasso_opt)
 
     # Ground truth pose
     smpl_forward(torch.squeeze(imu), torch.squeeze(gt), smpl_vae_model, body_model, False, False, 'gt')
     # Reconstructed pose
     smpl_forward(recons_vae, torch.squeeze(gt), smpl_vae_model, body_model, False, False, 'vae')
-    smpl_forward(recons_lasso, torch.squeeze(gt), smpl_vae_model, body_model, False, False, 'lasso')
+    smpl_forward(recons_lasso_pow, torch.squeeze(gt), smpl_vae_model, body_model, False, False, 'lasso')
+    smpl_forward(recons_lasso_opt, torch.squeeze(gt), smpl_vae_model, body_model, False, False, 'lasso-opt')
     smpl_forward(recons_dip, torch.squeeze(gt), smpl_vae_model, body_model, False, False, 'dip')
 
 
@@ -333,7 +342,7 @@ def eval_smpl_vae(smpl_vae_ver=0, batch_id=0):
     body_from_vertices(vts, faces, False, True)
 
 
-def eval_decoding_time(vae_ver=0, batch_sizes=[60], lasso_a=0.0001, log_interval=100, plot=False):
+def eval_decoding_time(vae_ver=0, batch_sizes=[60], l1_penalty=0.0001, log_interval=100, plot=False):
     vae_config_fname = 'logs/VanillaVAE/version_{}/config.yaml'.format(vae_ver)
     dip_config_fname = 'logs/DIPVAE/version_{}/config.yaml'.format(vae_ver)
     A_fname = 'logs/VanillaVAE/version_{}/A.pt'.format(vae_ver)
@@ -354,37 +363,42 @@ def eval_decoding_time(vae_ver=0, batch_sizes=[60], lasso_a=0.0001, log_interval
     # Plot if it is required
     if plot:
         matplotlib.use('TkAgg')
-        lasso_time_arr = []
+        lasso_pow_time_arr = []
+        lasso_opt_time_arr = []
         vae_time_arr = []
         dip_time_arr = []
         for batch_size in batch_sizes:
             f_name = os.path.join(saved_dir, 'btz_size_{}.npz'.format(batch_size))
             results = np.load(f_name)
-            lasso_time_arr.append(results['lasso_time'])
+            lasso_pow_time_arr.append(results['lasso_pow_time'])
+            lasso_opt_time_arr.append(results['lasso_opt_time'])
             vae_time_arr.append(results['vae_time'])
             dip_time_arr.append(results['dip_time'])
             # print(results['vae_time'])
         x = ['60', '120', '180', '240', '300', '360', '420']
 
         # print('vae_time_arr: {}'.format(vae_time_arr))
-        y_vae, y_lasso, y_dip = [], [], []
-        y_vae_err, y_lasso_err, y_dip_err = [], [], []
+        y_vae, y_lasso_pow, y_lasso_opt, y_dip = [], [], [], []
+        y_vae_err, y_lasso_pow_err, y_lasso_opt_err, y_dip_err = [], [], [], []
         for i in range(len(vae_time_arr)):
             y_vae.append(np.mean(vae_time_arr[i]))
-            y_vae_err.append(np.std(vae_time_arr[i]))
-            y_lasso.append(np.mean(lasso_time_arr[i]))
-            y_lasso_err.append(np.std(lasso_time_arr[i]))
+            y_vae_err.append(np.std(vae_time_arr[i]/2))
+            y_lasso_pow.append(np.mean(lasso_pow_time_arr[i]))
+            y_lasso_pow_err.append(np.std(lasso_pow_time_arr[i]/2))
+            y_lasso_opt.append(np.mean(lasso_opt_time_arr[i]))
+            y_lasso_opt_err.append(np.std(lasso_opt_time_arr[i]/2))
             y_dip.append(np.mean(dip_time_arr[i]))
-            y_dip_err.append(np.std(dip_time_arr[i]))
+            y_dip_err.append(np.std(dip_time_arr[i]/2))
         plt.errorbar(x, y_vae, yerr=y_vae_err, fmt='-o', capsize=4, linewidth=line_width, label='CS-VAE')
-        plt.errorbar(x, y_lasso, yerr=y_dip_err, fmt='-o', capsize=4, linewidth=line_width, label='Lasso')
-        plt.errorbar(x, y_dip, yerr=y_dip_err, fmt='-o', capsize=4, linewidth=line_width, label='DIP')
+        plt.errorbar(x, y_lasso_pow, yerr=y_lasso_pow_err, fmt='--o', capsize=4, linewidth=line_width, label='Lasso')
+        plt.errorbar(x, y_lasso_opt, yerr=y_lasso_opt_err, fmt='--o', capsize=4, linewidth=line_width, label='Lasso w.o.13b')
+        plt.errorbar(x, y_dip, yerr=y_dip_err, fmt='--o', capsize=4, linewidth=line_width, label='DIP')
         plt.xlabel('Batch size', fontsize=font_size)
         plt.ylabel('Decoding time (s)', fontsize=font_size)
         plt.yscale('log')
-        plt.subplots_adjust(left=0.15,
+        plt.subplots_adjust(left=0.16,
                             bottom=0.15,
-                            right=0.97,
+                            right=0.98,
                             top=0.95,
                             wspace=0.2,
                             hspace=0.255)
@@ -392,7 +406,9 @@ def eval_decoding_time(vae_ver=0, batch_sizes=[60], lasso_a=0.0001, log_interval
         plt.grid(linestyle='--')
         plt.xticks(fontsize=xtick_size)
         plt.yticks(fontsize=ytick_size)
-        plt.legend(fontsize=legend_size)
+        legend = plt.legend(fontsize=legend_size, loc='best', ncol=2)
+        legend.get_frame().set_alpha(None)
+        legend.get_frame().set_facecolor((0, 0, 0, 0))
         plt.show()
         return
 
@@ -418,33 +434,41 @@ def eval_decoding_time(vae_ver=0, batch_sizes=[60], lasso_a=0.0001, log_interval
     m = exp_vae.h_in
     n = exp_vae.h_out
 
-    for batch_size in batch_sizes:
+    for batch_id in batch_sizes:
         vae_time = []
         # Lasso parameters
-        lasso_time = []
-        lasso = Lasso(alpha=lasso_a, tol=1e-4)
+        lasso_pow_time = []
+        lasso_opt_time = []
+        lasso_pow = Lasso(alpha=l1_penalty, tol=1e-3)
+        lasso_opt = Lasso(alpha=l1_penalty, tol=1e-3)
+        A_opt = torch.normal(mean=0, std=1 / math.sqrt(m), size=[m, n])
         # DIP parameters
         dip_time = []
         # test model with test dataset
         test_dataset = IMUDataset(file_path, mode='test', transform=None)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
+        test_loader = DataLoader(test_dataset, batch_size=batch_id, shuffle=False, drop_last=True)
         for batch_id, (imu, gt) in enumerate(test_loader):
             if batch_id == 0:
-                print('\nBatch size: {}, running on: {}'.format(batch_size, imu.device))
+                print('\nBatch size: {}, running on: {}'.format(batch_id, imu.device))
             imu_flat = torch.squeeze(imu)
             # VAE
-            noise = torch.normal(mean=0, std=exp_vae.noise_std, size=(batch_size, m))
+            noise = torch.normal(mean=0, std=exp_vae.noise_std, size=(batch_id, m))
             y_batch = matmul_A(imu_flat, A, noise)
             t0_vae = time.time()
             recons_vae = vae_model(y_batch, A=A)[0]  # [b, n]
             vae_time.append(time.time() - t0_vae)  # vae_time: (nb, )
 
             # Lasso
-            y_lasso = y_batch.cpu().detach().numpy()
+            y_lasso_pow = y_batch.cpu().detach().numpy()
             t0_lasso = time.time()
-            lasso.fit(X=A, y=y_lasso.T)
-            lasso_time.append(time.time() - t0_lasso)
-            recons_lasso = lasso.coef_.reshape([batch_size, n])
+            lasso_pow.fit(X=A, y=y_lasso_pow.T)
+            lasso_pow_time.append(time.time() - t0_lasso)
+            recons_lasso = lasso_pow.coef_.reshape([batch_id, n])
+            y_lasso_opt = matmul_A(imu_flat, A_opt, noise)
+            t1_lasso = time.time()
+            lasso_opt.fit(X=A_opt, y=y_lasso_opt.cpu().detach().numpy().T)
+            lasso_opt_time.append(time.time() - t1_lasso)
+            recons_lasso_opt = lasso_opt.coef_.reshape([batch_id, n])
 
             # DIP
             y_dip = dip_model.get_input(imu_flat, exp_dip.dip_positions, exp_dip.noise_std, exp_dip.P_T,
@@ -454,14 +478,17 @@ def eval_decoding_time(vae_ver=0, batch_sizes=[60], lasso_a=0.0001, log_interval
             dip_time.append(time.time() - t0_dip)
 
             if batch_id % log_interval == 0:
-                print('Batch: %4d: Time_VAE / Time_Lasso / Time_DIP: %5.3f / %5.3f / %5.3f'
-                      % (batch_id, np.mean(vae_time), np.mean(lasso_time), np.mean(dip_time)))
+                print(
+                    'Batch: %4d: Time_VAE / Time_Lasso_pow / Time_Lasso_opt / Time_DIP: %5.3f / %5.3f / %5.3f / %5.3f'
+                    % (batch_id, np.mean(vae_time), np.mean(lasso_pow_time), np.mean(lasso_opt_time), np.mean(dip_time))
+                      )
 
-        saved_file = os.path.join(saved_dir, 'btz_size_{}.npz'.format(batch_size))
-        np.savez(saved_file, vae_time=vae_time, lasso_time=lasso_time, dip_time=dip_time)
+        saved_file = os.path.join(saved_dir, 'btz_size_{}.npz'.format(batch_id))
+        np.savez(saved_file, vae_time=vae_time, lasso_pow_time=lasso_pow_time,
+                 lasso_opt_time=lasso_opt_time, dip_time=dip_time)
 
 
-def eval_baselines(vae_ver=0, batch_size=60, lasso_a=0.0001, log_interval=10):
+def eval_baselines(vae_ver=0, batch_size=60, l1_penalty=0.0001, log_interval=10):
     """
     Use to evaluate the baselines with metric is either 'mn' or 'csnr'. With metric 'time', use 'eval_decoding_time'
     instead
@@ -511,9 +538,13 @@ def eval_baselines(vae_ver=0, batch_size=60, lasso_a=0.0001, log_interval=10):
     vae_time = []
 
     # Lasso parameters
-    lasso_loss = []
-    lasso_time = []
-    lasso = Lasso(alpha=lasso_a, tol=1e-4)
+    lasso_pow_loss = []
+    lasso_pow_time = []
+    lasso_pow = Lasso(alpha=l1_penalty, tol=1e-3)
+    A_opt = torch.normal(mean=0, std=1/math.sqrt(m), size=[m, n])
+    lasso_opt_loss = []
+    lasso_opt_time = []
+    lasso_opt = Lasso(alpha=l1_penalty, tol=1e-3)
 
     # DIP parameters
     dip_loss = []
@@ -529,88 +560,109 @@ def eval_baselines(vae_ver=0, batch_size=60, lasso_a=0.0001, log_interval=10):
         t0_vae = time.time()
         recons_vae = vae_model(y_batch, A=A)[0]  # [b, n]
         vae_time.append(time.time() - t0_vae)
-        loss_vae = get_l2_norm(recons_vae.cpu().detach().numpy(), imu_flat.cpu().detach().numpy())
+        loss_vae = get_mean_loss(recons_vae.cpu().detach().numpy(), imu_flat.cpu().detach().numpy())
         vae_loss.append(loss_vae)
 
-        # Lasso
-        y_lasso = y_batch.cpu().detach().numpy()
+        # We evaluate two scenarios with Lasso, i.e., with and without power constrain
+        # by using different measurement matrices
+        # scenario 1: With pow constraint
+        y_lasso_pow = matmul_A(imu_flat, A, noise)
         t0_lasso = time.time()
-        lasso.fit(X=A, y=y_lasso.T)
-        lasso_time.append(time.time() - t0_lasso)
-        recons_lasso = lasso.coef_.reshape([batch_size, n])
-        loss_lasso = get_l2_norm(recons_lasso, imu_flat.cpu().detach().numpy())
-        lasso_loss.append(loss_lasso)
+        lasso_pow.fit(X=A, y=y_lasso_pow.T)
+        lasso_pow_time.append(time.time() - t0_lasso)
+        recons_lasso_pow = lasso_pow.coef_.reshape([batch_size, n])
+        loss = get_mean_loss(recons_lasso_pow, imu_flat.cpu().detach().numpy())
+        lasso_pow_loss.append(loss)
+        # scenario 2: Without pow constraint
+        y_lasso_opt = matmul_A(imu_flat, A_opt, noise)
+        t1_lasso = time.time()
+        lasso_opt.fit(X=A_opt, y=y_lasso_opt.T)
+        lasso_opt_time.append(time.time() - t1_lasso)
+        recons_lasso_opt = lasso_opt.coef_.reshape([batch_size, n])
+        loss = get_mean_loss(recons_lasso_opt, imu_flat.cpu().detach().numpy())
+        lasso_opt_loss.append(loss)
 
         # DIP
         y_dip = dip_model.get_input(imu_flat, exp_dip.dip_positions, exp_dip.noise_std, exp_dip.P_T, exp_dip.curr_device)
         t0_dip = time.time()
         recons_dip = dip_model(y_dip, positions=exp_dip.dip_positions)[0]
         dip_time.append(time.time() - t0_dip)
-        loss_dip = get_l2_norm(recons_dip.cpu().detach().numpy(), imu_flat.cpu().detach().numpy())
+        loss_dip = get_mean_loss(recons_dip.cpu().detach().numpy(), imu_flat.cpu().detach().numpy())
         dip_loss.append(loss_dip)
 
         if batch_id % log_interval == 0:
-            print('Batch: %4d: Loss_VAE / Loss_Lasso / Loss_DIP: %5.3f / %5.3f / %5.3f '
-                  '--- Time_VAE / Time_Lasso / Time_DIP: %5.3f / %5.3f / %5.3f'
-                  % (batch_id, np.mean(vae_loss), np.mean(lasso_loss), np.mean(dip_loss),
-                     np.mean(vae_time), np.mean(lasso_time), np.mean(dip_time)))
+            print('Batch: %4d: Loss_VAE / Loss_Lasso_pow / Loss_Lasso_opt / Loss_DIP: %5.3f / %5.3f / %5.3f / %5.3f '
+                  '--- Time_VAE / Time_Lasso_pow / Time_Lasso_opt / Time_DIP: %5.3f / %5.3f / %5.3f / %5.3f'
+                  % (batch_id, np.mean(vae_loss), np.mean(lasso_pow_loss), np.mean(lasso_opt_loss), np.mean(dip_loss),
+                     np.mean(vae_time), np.mean(lasso_pow_time), np.mean(lasso_opt_time), np.mean(dip_time)))
 
-    np.savez(saved_dir, vae_loss=vae_loss, lasso_loss=lasso_loss, dip_loss=dip_loss,
-             vae_time=vae_time, lasso_time=lasso_time, dip_time=dip_time)
+    np.savez(saved_dir, vae_loss=vae_loss, lasso_pow_loss=lasso_pow_loss, lasso_opt_loss=lasso_opt_loss, dip_loss=dip_loss,
+             vae_time=vae_time, lasso_pow_time=lasso_pow_time, lasso_opt_time=lasso_opt_time, dip_time=dip_time)
 
 
 def plot_results(vae_vers=[0], metric='mn'):
     matplotlib.use('TkAgg')
     vae_loss_arr = []
     vae_time_arr = []
-    lasso_loss_arr = []
-    lasso_time_arr = []
+    lasso_pow_loss = []
+    lasso_pow_time_arr = []
+    lasso_opt_loss = []
+    lasso_opt_time_arr = []
     dip_loss_arr = []
     dip_time_arr = []
     for v in vae_vers:
         f_name = 'logs/VanillaVAE/version_{}/results.npz'.format(v)
         results = np.load(f_name)
-        lasso_loss_arr.append(results['lasso_loss'])
-        lasso_time_arr.append(results['lasso_time'])
+        lasso_pow_loss.append(results['lasso_pow_loss'])
+        lasso_pow_time_arr.append(results['lasso_pow_time'])
+        lasso_opt_loss.append(results['lasso_opt_loss'])
+        lasso_opt_time_arr.append(results['lasso_opt_time'])
         vae_loss_arr.append(results['vae_loss'])
         vae_time_arr.append(results['vae_time'])
         dip_loss_arr.append(results['dip_loss'])
         dip_time_arr.append(results['dip_time'])
 
     if metric == 'mn':
-        x = ['24', '48', '72', '120', '144', '168', '192']
-        plt.errorbar(x, np.mean(vae_loss_arr, axis=1), yerr=np.std(vae_loss_arr, axis=1),
+        # We just plot the error bars with half of the std values for clearer illustration
+        x = ['48', '72', '120', '144', '168', '192']
+        plt.errorbar(x, np.mean(vae_loss_arr, axis=1), yerr=np.std(vae_loss_arr, axis=1) / 2,
                      fmt='-o', capsize=4, linewidth=line_width, label='CS-VAE')
-        plt.errorbar(x, np.mean(lasso_loss_arr, axis=1), yerr=np.std(lasso_loss_arr, axis=1),
-                     fmt='-o', capsize=4, linewidth=line_width, label='Lasso')
-        plt.errorbar(x, np.mean(dip_loss_arr, axis=1), yerr=np.std(dip_loss_arr, axis=1),
-                     fmt='-o', capsize=4, linewidth=line_width, label='DIP')
+        plt.errorbar(x, np.mean(lasso_pow_loss, axis=1), yerr=np.std(lasso_pow_loss, axis=1) / 2,
+                     fmt='--o', capsize=4, linewidth=line_width, label='Lasso')
+        plt.errorbar(x, np.mean(lasso_opt_loss, axis=1), yerr=np.std(lasso_opt_loss, axis=1) / 2,
+                     fmt='--o', capsize=4, linewidth=line_width, label='Lasso w.o.13b')
+        plt.errorbar(x, np.mean(dip_loss_arr, axis=1), yerr=np.std(dip_loss_arr, axis=1) / 2,
+                     fmt='--o', capsize=4, linewidth=line_width, label='DIP')
         plt.xlabel('Number of measurements (m)', fontsize=font_size)
         plt.ylabel('Mean square error', fontsize=font_size)
     elif metric == 'csnr':
-        x = [k for k in range(0, 35, 5)]
-        plt.errorbar(x, np.mean(vae_loss_arr, axis=1), yerr=np.std(vae_loss_arr, axis=1),
+        x = [k for k in range(5, 35, 5)]
+        plt.errorbar(x, np.mean(vae_loss_arr, axis=1), yerr=np.std(vae_loss_arr, axis=1) / 2,
                      fmt='-o', capsize=4, linewidth=line_width, label='CS-VAE')
-        plt.errorbar(x, np.mean(lasso_loss_arr, axis=1), yerr=np.std(lasso_loss_arr, axis=1),
-                     fmt='-o', capsize=4, linewidth=line_width, label='Lasso')
-        plt.errorbar(x, np.mean(dip_loss_arr, axis=1), yerr=np.std(dip_loss_arr, axis=1),
-                     fmt='-o', capsize=4, linewidth=line_width, label='DIP')
+        plt.errorbar(x, np.mean(lasso_pow_loss, axis=1), yerr=np.std(lasso_pow_loss, axis=1) / 2,
+                     fmt='--o', capsize=4, linewidth=line_width, label='Lasso')
+        plt.errorbar(x, np.mean(lasso_opt_loss, axis=1), yerr=np.std(lasso_opt_loss, axis=1) / 2,
+                     fmt='--o', capsize=4, linewidth=line_width, label='Lasso w.o.13b')
+        plt.errorbar(x, np.mean(dip_loss_arr, axis=1), yerr=np.std(dip_loss_arr, axis=1) / 2,
+                     fmt='--o', capsize=4, linewidth=line_width, label='DIP')
         plt.xlabel('CSNR (dB)', fontsize=font_size)
         plt.ylabel('Mean square error', fontsize=font_size)
     else:
         x = ['24', '48', '72', '120', '144', '168', '192']
         plt.errorbar(x, np.mean(vae_time_arr, axis=1), yerr=np.std(vae_time_arr, axis=1),
                      fmt='-o', capsize=4, linewidth=line_width, label='CS-VAE')
-        plt.errorbar(x, np.mean(lasso_time_arr, axis=1), yerr=np.std(lasso_time_arr, axis=1),
+        plt.errorbar(x, np.mean(lasso_pow_time_arr, axis=1), yerr=np.std(lasso_pow_time_arr, axis=1),
                      fmt='-o', capsize=4, linewidth=line_width, label='Lasso')
+        plt.errorbar(x, np.mean(lasso_opt_time_arr, axis=1), yerr=np.std(lasso_opt_time_arr, axis=1),
+                     fmt='-o', capsize=4, linewidth=line_width, label='Lasso w.o.13b')
         plt.errorbar(x, np.mean(dip_time_arr, axis=1), yerr=np.std(dip_time_arr, axis=1),
                      fmt='-o', capsize=4, linewidth=line_width, label='DIP')
         plt.xlabel('Number of measurements (m)', fontsize=font_size)
         plt.ylabel('Decoding time (s)', fontsize=font_size)
 
-    plt.subplots_adjust(left=0.15,
+    plt.subplots_adjust(left=0.16,
                         bottom=0.15,
-                        right=0.97,
+                        right=0.98,
                         top=0.95,
                         wspace=0.2,
                         hspace=0.255)
@@ -618,7 +670,9 @@ def plot_results(vae_vers=[0], metric='mn'):
     plt.grid(linestyle='--')
     plt.xticks(fontsize=xtick_size)
     plt.yticks(fontsize=ytick_size)
-    plt.legend(fontsize=legend_size)
+    legend = plt.legend(fontsize=legend_size, loc='best', ncol=2)
+    legend.get_frame().set_alpha(None)
+    legend.get_frame().set_facecolor((0, 0, 0, 0))
     plt.show()
 
 
@@ -717,22 +771,27 @@ if __name__ == '__main__':
     EVALUATION = False
     # /--- ***** Part 1: Evaluate baseline algorithms before plotting results *******-------/
     if EVALUATION:
-        for i in range(14):
-            eval_baselines(vae_ver=i, batch_size=60, lasso_a=0.0001, log_interval=100)  # version 0 to 13
-        eval_decoding_time(vae_ver=6, batch_sizes=[60, 120, 180, 240, 300, 360, 420], plot=False)
+        # eval_baselines(vae_ver=1, batch_size=60, l1_penalty=1e-4, log_interval=10)  # version 0 to 13
+        for i in range(0, 14):
+            eval_baselines(vae_ver=i, batch_size=60, l1_penalty=1e-5, log_interval=100)  # version 0 to 13
+        eval_decoding_time(vae_ver=5, batch_sizes=[60, 120, 180, 240, 300, 360, 420], plot=False)
 
     # /--- ***** Part 2: Get simulation results after evaluation *******-------/
     else:
-        # Visualize pretrained SMPL-VAE model
-        # Visualize IMU data
+        # Visualize IMU data and pretrained SMPL-VAE model
         plot_imu_readings(subject='s_03/04', sensor='imu_ori', start_time=0, end_time=10, imu_position=imu_map['lwrist'])
-        visualize_pose(subject='s_03/04')
+        # visualize_pose(subject='s_03/04')
 
         eval_smpl_vae(smpl_vae_ver=24, batch_id=99)
 
-        # Plot results
-        reconstruct_pose(vae_ver=4, smpl_vae_ver=24, batch_size=6, batch_id=890)  # 890,  1111, 4440
-        latent_interpolation(vae_ver=5, spml_vae_ver=24, batch_size=60, batch_start=222, batch_end=446)
-        plot_results(vae_vers=[k for k in range(0, 7)], metric='mn')
-        plot_results(vae_vers=[k for k in range(7, 14)], metric='csnr')
+        # Plot all results
+        reconstruct_pose(vae_ver=5, smpl_vae_ver=24, batch_size=6, batch_id=4440)  # batch_id = 890,  1111, 4440
+
+        # For interpolation, we need to train another VAE with kld_weight=0.0001. This can make smoother transitions
+        # between the key poses, but the reconstructed signals can be less accurate.
+        latent_interpolation(vae_ver=14, spml_vae_ver=24, batch_size=60, batch_start=223, batch_end=447)
+
+        # Plot line graphs
+        plot_results(vae_vers=[k for k in range(1, 7)], metric='mn')
+        plot_results(vae_vers=[k for k in range(8, 14)], metric='csnr')
         eval_decoding_time(vae_ver=6, batch_sizes=[60, 120, 180, 240, 300, 360, 420], plot=True)

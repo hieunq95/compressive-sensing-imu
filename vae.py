@@ -72,7 +72,7 @@ class DIPVAE(BaseVAE):
         y_ori = x_ori[:, positions.tolist(), :]  # [b, 6, 12]
         y = torch.reshape(y_ori, [b, self.h_in]).to(device)
         # Power normalize
-        y_norm_i = torch.norm(y, p=2, dim=1).to(device)  # [1, b]
+        y_norm_i = torch.linalg.vector_norm(y, ord=2, dim=1).to(device)  # [1, b]
         power = math.sqrt(self.h_in * self.P_T)
         a = power / torch.reshape(y_norm_i, [b, 1]).to(device)
         a = a.repeat(1, self.h_in).to(device)
@@ -266,7 +266,7 @@ class MyVAE(BaseVAE):
         decoder_layers = [
             nn.Linear(self.latent_dim, self.h_dims[1]),
             nn.ReLU(),
-            # nn.Dropout(0.25),
+            nn.Dropout(0.25),
             nn.Linear(self.h_dims[1], self.h_out),
             nn.Tanh()
         ]
@@ -313,17 +313,19 @@ class MyVAE(BaseVAE):
         log_var = args[3]
         A = args[4]  # (h_in, h_out)
 
-        gz_loss = torch.norm(recons, p=1)  # L_1 regularizer
+        gz_loss = torch.mean(torch.linalg.vector_norm(recons, ord=1, dim=1))  # L_1 regularizer ||G(z)||_1
         gz_weight = kwargs['g_z']
-        kld_weight = kwargs['M_N']  # Account for the minibatch samples from the dataset
+        kld_weight = kwargs['M_N']
         recons = matmul_A(recons, A)
-        recons_loss = F.mse_loss(recons, input, reduction='sum')
+        # recons_loss = F.mse_loss(recons, input, reduction='mean')
+        # ||AG(z) - y_hat||_2^2
+        recons_loss = torch.mean(torch.square(torch.linalg.vector_norm(recons - input, ord=2, dim=1)))
         kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim=1), dim=0)
         loss = recons_loss + kld_weight * kld_loss + gz_weight * gz_loss
 
         return {'loss': loss, 'Reconstruction_Loss': recons_loss.detach(), 'KLD': -kld_loss.detach()}
 
-    def sample(self,num_samples: int, current_device: int, **kwargs) -> Tensor:
+    def sample(self, num_samples: int, current_device: int, **kwargs) -> Tensor:
         z = torch.randn(num_samples,
                         self.latent_dim)
 

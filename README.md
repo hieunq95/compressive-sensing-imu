@@ -41,7 +41,7 @@ Run `train_dip.py` to train the DIP baseline.
 All scenarios can be obtained by changing parameters `h_in`, `h_out`, and `eta` in yaml files.
 
 After training, the training results should be placed in directories like `logs/VanillaVAE`, `logs/DIPVAE`, 
-`logs/SMPLVAE`, and `DecodingTime`.
+`logs/SMPLVAE`, and `logs/DecodingTime`.
 
 The running versions are automatically named by pytorch-lightning.
 
@@ -52,4 +52,4 @@ Make sure that `file_path` and `bm_fname` parameters in this file are correct.
 
 Change parameter `EVALUATION` to True and run the file to obtain all results. 
 
-If you only want to plot the results, set the `EVALUATION` parameter to False and rerun the fil.
+If you only want to plot the results, set the `EVALUATION` parameter to False and rerun the file.

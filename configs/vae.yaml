@@ -2,15 +2,16 @@ model_params:
   name: 'VanillaVAE'
   in_channels: 1
   latent_dim: 10
-  h_in: &h_in 120  # compress 24 - 48 - 72 - 120* - 144 - 168 - 192
+  h_in: &h_in 120  # compress 24, 48, 72, 120*, 144, 168, 192
   h_out: &h_out 204
-  eta: &eta 0.01  # CSNR(dB) 0 -> 30: 0.1 - 0.0562 - 0.0316 - 0.0178 - 0.01* - 0.0056 - 0.0031
-  P_T: &P_T 0.01
+  # CSNR (dB) 0 -> 30: 0.1, 0.03162277660168379, 0.01, 0.0031622776601683794, 0.001, 0.00031622776601683794, 0.0001*
+  eta: &eta 0.0001
+  P_T: &P_T 0.1  # 20 dBm
 
 data_params:
   data_path: "/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/"
   train_batch_size: 60
-  val_batch_size:  512
+  val_batch_size:  600
   patch_size: 4
   num_workers: 4
 
@@ -20,7 +21,7 @@ exp_params:
   weight_decay: 0.0
   scheduler_gamma: 0.95
   kld_weight: 0.00001
-  gz_weight: 0.0001
+  gz_weight: 0.00001
   manual_seed: 1234
   h_in: *h_in
   h_out: *h_out

@@ -1,6 +1,8 @@
+import math
 import yaml
 import numpy as np
 import torch
+import imu_utils
 from dataset import IMUDataset
 from torch.utils.data import DataLoader
 
@@ -83,24 +85,59 @@ def create_corrupted_tensor(data, indices_to_replace):
     return new_tensor
 
 
+def test_power_normalization():
+    batch_size = 10
+    file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/'
+    test_dataset = IMUDataset(file_path, mode='train', transform=None)
+    test_data_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
+
+    # Matrix A
+    P_T = 0.1
+    h_in = 102
+    h_out = 204
+    varepsilon = 1e-6
+    d = 2
+    imu_all = torch.from_numpy(test_dataset.imu)
+    imu_all = torch.flatten(torch.squeeze(imu_all))
+    std_x = torch.std(imu_all)
+    mean_x = torch.mean((imu_all))
+
+    sigma_a2 = (P_T - varepsilon) / (h_in**2 * d**2 * (d * std_x + mean_x)**2)
+    sigma_a = math.sqrt(sigma_a2)
+    print('mean_x: {}, sigma_x: {}'.format(mean_x, std_x))
+    print('sigma_a: {}'.format(sigma_a))
+
+    A = torch.normal(mean=0, std=sigma_a, size=[h_in, h_out])  # (m, n)
+    for epoch, (imu, _) in enumerate(test_data_loader):
+        imu = torch.squeeze(imu)
+        # print('x.size: {}'.format(imu.size()))
+        y_batch = imu_utils.matmul_A(imu, A)
+        # print('y.size: {}'.format(y_batch.size()))
+        # print('||x||_2^2: {}'.format(torch.linalg.vector_norm(imu, ord=2, dim=1)))
+        y_2_norm = torch.linalg.vector_norm(y_batch, ord=2, dim=1)
+        if epoch % 10 == 0:
+            print('1/m * ||y||_2^2: {}'.format(1/h_in * torch.square(y_2_norm)))
+
+    print('example:')
+    At = torch.asarray([[0.1, 0, 0.5], [-0.1, 0.2, 0.2]])  # 2 x 3
+    x = torch.asarray([[1, 0, 0.5], [-1, -1, 0]])  # 2 * 3
+    x = torch.transpose(x, 0, 1)
+    print('At: {}, x: {}'.format(At, x.T))
+    print('At*x: {}'.format(torch.matmul(At, x)))
+
+
+def csnr_calculator(csnr_values=[0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0], P=0.1):
+    sigma_N = []
+    for x in csnr_values:
+        sigma_N.append(P / (10**(x / 10)))
+    return sigma_N
+
+
 if __name__ == '__main__':
     # test_data_loader()
+    # test_power_normalization()
+    print(csnr_calculator())
 
-    file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/'
-    test_dataset = IMUDataset(file_path, mode='test', transform=None)
-    test_data_loader = DataLoader(test_dataset, batch_size=60, shuffle=False, drop_last=True)
-    imu, _ = list(iter(test_data_loader))[0]
-    imu = torch.squeeze(imu)
-    print('data: {}'.format(imu))
 
-    # List of indices of missing batches
-    missing_batch_indices = [0, 1, 2, 3, 4, 5, 54, 55, 56, 57, 58, 59]
-    corrupted_imu = create_corrupted_tensor(imu, missing_batch_indices)
-    print('new_data: {}'.format(corrupted_imu.size()))
-    print(corrupted_imu)
-
-    missing_intervals = [(0, 5), (54, 59)]
-    interpolated_imu = interpolate_nan_intervals(corrupted_imu, missing_intervals)
-    print(interpolated_imu, interpolated_imu.size())
 
 

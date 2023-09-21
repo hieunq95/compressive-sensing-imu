@@ -10,7 +10,7 @@ import cv2
 import torch
 
 
-def get_l2_norm(x, y):
+def get_mean_loss(x, y):
     l2_norm_array = np.power(np.subtract(x, y), 2)
     return np.mean(l2_norm_array)
 
@@ -77,7 +77,7 @@ def matmul_A(x, A, noise=None):
     """
     # (h_in, h_out) * (h_out, b) + (h_in, b) -> (h_in, b)
     x_T = torch.transpose(x, 0, 1)  # (h_out, b)
-    Ax_T = torch.matmul(A, x_T)  # (h_in, b)
+    Ax_T = torch.mm(A, x_T)  # (h_in, b)
     if noise is not None:
         noise_T = torch.transpose(noise, 0, 1)  # (h_in, b)
         y = torch.add(Ax_T, noise_T)  # (h_in, b)
@@ -139,7 +139,7 @@ def plot_reconstruction_data(x, y, imu_start, imu_end, dir):
         figure, (ax1, ax2) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]})
         ax1.plot(x[i, imu_start*9:(imu_end+1)*9], linestyle='--', label='Recons')
         ax1.plot(y[i, imu_start*9:(imu_end+1)*9], linestyle='-', label='Labels')
-        print('Measurement loss: {}'.format(get_l2_norm(x, y)))
+        print('Measurement loss: {}'.format(get_mean_loss(x, y)))
 
         ax1.set_title('Real-time prediction')
         ax1.set_xlabel('Frame')

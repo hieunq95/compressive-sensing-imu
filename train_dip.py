@@ -51,11 +51,11 @@ class DIPExperiment(pl.LightningModule):
         b = x.size()[0]
         x_ori = torch.reshape(x, [b, 17, 12]).to(device)
         y_ori = x_ori[:, positions, :]  # [b, 6, 12]
-        y = torch.reshape(y_ori, [b, self.h_in]).to(device)
+        y = torch.reshape(y_ori, [b, self.h_in]).to(device)  # (b, m)
 
         # Power normalize and add noise
         noise = torch.normal(mean=0, std=eta, size=[b, self.h_in]).to(device)
-        y_norm_i = torch.norm(y, p=2, dim=1).to(device)  # [1, b]
+        y_norm_i = torch.linalg.norm(y, ord=2, dim=1).to(device)  # [1, b]
         power = math.sqrt(self.h_in * P)
         a = power / torch.reshape(y_norm_i, [b, 1]).to(device)
         a = a.repeat(1, self.h_in).to(device)

@@ -13,7 +13,7 @@ import torch
 from pathlib import Path
 from vae import BaseVAE, MyVAE
 from imu_utils import matmul_A
-from dataset import CompSensDataset
+from dataset import CompSensDataset, IMUDataset
 from torch import Tensor
 from torch import optim
 from pytorch_lightning import Trainer
@@ -35,13 +35,31 @@ class VAEXperiment(pl.LightningModule):
         self.hold_graph = False
         self.P_T = self.params['P_T']
         self.noise_std = self.params['eta']
-        sigma_a = 1/3 * math.sqrt(self.h_in * self.P_T / self.h_out)
-        self.A = torch.normal(mean=0, std=sigma_a, size=[self.h_in, self.h_out])  # (m, n)
+        self.A, _ = self.get_A(d=2)
         self.compress_loss = []
         try:
             self.hold_graph = self.params['retain_first_backpass']
         except:
             pass
+
+    def get_A(self, d=2, varepsilon=1e-6, use_sigma_x=True):
+        # Generate matrix A follows the proposition
+        imu_all_set = IMUDataset('/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/', mode='train', transform=None)
+        imu_all = torch.from_numpy(imu_all_set.imu)
+        imu_all = torch.flatten(torch.squeeze(imu_all))
+        if use_sigma_x:
+            # We get the measurement matrix based on statistical results of training set
+            sigma_x = torch.std(imu_all)
+            mean_x = torch.mean(imu_all)
+        else:
+            # In case we do not use the statistical results from training set, let's keep these values fixed
+            sigma_x = 0.2
+            mean_x = 0
+
+        bound_x2 = max((-1 * d * sigma_x + mean_x) ** 2, (d * sigma_x + mean_x) ** 2)
+        sigma_a = math.sqrt(self.P_T - varepsilon) / (self.h_out * d * math.sqrt(bound_x2))
+        print('sigma_x: {}, sigma_a: {}, mean_x: {}'.format(sigma_x, sigma_a, mean_x))
+        return torch.normal(mean=0, std=sigma_a, size=[self.h_in, self.h_out]), sigma_a  # (m, n)
 
     def forward(self, input: Tensor, **kwargs) -> Tensor:
         return self.model(input, **kwargs)
@@ -58,8 +76,8 @@ class VAEXperiment(pl.LightningModule):
 
         results = self.forward(y_batch, A=self.A.to(self.curr_device))
         train_loss = self.model.loss_function(*results,
-                                              M_N=self.params['kld_weight']*batch_size,
-                                              g_z=self.params['gz_weight']*batch_size,
+                                              M_N=self.params['kld_weight'],
+                                              g_z=self.params['gz_weight'],
                                               optimizer_idx=optimizer_idx,
                                               batch_idx=batch_idx)
 
@@ -79,8 +97,8 @@ class VAEXperiment(pl.LightningModule):
 
         results = self.forward(y_batch, A=self.A.to(self.curr_device))
         val_loss = self.model.loss_function(*results,
-                                            M_N=self.params['kld_weight']*batch_size,
-                                            g_z=self.params['gz_weight'] * batch_size,
+                                            M_N=self.params['kld_weight'],
+                                            g_z=self.params['gz_weight'],
                                             optimizer_idx=optimizer_idx,
                                             batch_idx=batch_idx)
 
