@@ -490,7 +490,7 @@ def eval_decoding_time(vae_ver=0, batch_sizes=[60], l1_penalty=0.0001, log_inter
 
 def eval_baselines(vae_ver=0, batch_size=60, l1_penalty=0.0001, log_interval=10):
     """
-    Use to evaluate the baselines with metric is either 'mn' or 'csnr'. With metric 'time', use 'eval_decoding_time'
+    Use to evaluate the baselines with metric is either 'mn' or 'noise'. With metric 'time', use 'eval_decoding_time'
     instead
     """
     vae_config_fname = 'logs/VanillaVAE/version_{}/config.yaml'.format(vae_ver)
@@ -635,8 +635,8 @@ def plot_results(vae_vers=[0], metric='mn'):
                      fmt='--o', capsize=4, linewidth=line_width, label='DIP')
         plt.xlabel('Number of measurements (m)', fontsize=font_size)
         plt.ylabel('Mean square error', fontsize=font_size)
-    elif metric == 'csnr':
-        x = [k for k in range(5, 35, 5)]
+    elif metric == 'noise':
+        x = ['1', '5', '10', '50', '100', '500']
         plt.errorbar(x, np.mean(vae_loss_arr, axis=1), yerr=np.std(vae_loss_arr, axis=1) / 2,
                      fmt='-o', capsize=4, linewidth=line_width, label='CS-VAE')
         plt.errorbar(x, np.mean(lasso_pow_loss, axis=1), yerr=np.std(lasso_pow_loss, axis=1) / 2,
@@ -645,7 +645,7 @@ def plot_results(vae_vers=[0], metric='mn'):
                      fmt='--o', capsize=4, linewidth=line_width, label='Lasso w.o.13b')
         plt.errorbar(x, np.mean(dip_loss_arr, axis=1), yerr=np.std(dip_loss_arr, axis=1) / 2,
                      fmt='--o', capsize=4, linewidth=line_width, label='DIP')
-        plt.xlabel('CSNR (dB)', fontsize=font_size)
+        plt.xlabel(r'$\sigma_N\ (10^{-4})$', fontsize=font_size)
         plt.ylabel('Mean square error', fontsize=font_size)
     else:
         x = ['24', '48', '72', '120', '144', '168', '192']
@@ -771,9 +771,9 @@ if __name__ == '__main__':
     EVALUATION = False
     # /--- ***** Part 1: Evaluate baseline algorithms before plotting results *******-------/
     if EVALUATION:
-        # eval_baselines(vae_ver=1, batch_size=60, l1_penalty=1e-4, log_interval=10)  # version 0 to 13
+        # eval_baselines(vae_ver=1, batch_size=60, l1_penalty=1e-5, log_interval=10)  # version 0 to 13
         for i in range(0, 14):
-            eval_baselines(vae_ver=i, batch_size=60, l1_penalty=1e-5, log_interval=100)  # version 0 to 13
+            eval_baselines(vae_ver=i, batch_size=60, l1_penalty=1e-5, log_interval=10)  # version 0 to 13
         eval_decoding_time(vae_ver=5, batch_sizes=[60, 120, 180, 240, 300, 360, 420], plot=False)
 
     # /--- ***** Part 2: Get simulation results after evaluation *******-------/
@@ -792,6 +792,6 @@ if __name__ == '__main__':
         latent_interpolation(vae_ver=14, spml_vae_ver=24, batch_size=60, batch_start=223, batch_end=447)
 
         # Plot line graphs
-        plot_results(vae_vers=[k for k in range(1, 7)], metric='mn')
-        plot_results(vae_vers=[k for k in range(8, 14)], metric='csnr')
+        plot_results(vae_vers=[1, 2, 3, 4, 5, 6], metric='mn')
+        plot_results(vae_vers=[13, 12, 11, 10, 9, 8], metric='noise')
         eval_decoding_time(vae_ver=6, batch_sizes=[60, 120, 180, 240, 300, 360, 420], plot=True)
