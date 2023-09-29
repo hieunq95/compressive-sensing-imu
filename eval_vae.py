@@ -787,7 +787,7 @@ if __name__ == '__main__':
         # Plot all results
         reconstruct_pose(vae_ver=5, smpl_vae_ver=24, batch_size=6, batch_id=4440)  # batch_id = 890,  1111, 4440
 
-        # For interpolation, we need to train another VAE with kld_weight=0.0001. This can make smoother transitions
+        # For interpolation, we need to train another VAE with kld_weight=0.0001 and h_in=168 for smoother transitions
         # between the key poses, but the reconstructed signals can be less accurate.
         latent_interpolation(vae_ver=14, spml_vae_ver=24, batch_size=60, batch_start=223, batch_end=447)
 

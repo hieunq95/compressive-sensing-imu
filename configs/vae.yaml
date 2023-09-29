@@ -2,7 +2,7 @@ model_params:
   name: 'VanillaVAE'
   in_channels: 1
   latent_dim: 10
-  h_in: &h_in 120  # m: 24, 48, 72, 120*, 144, 168, 192
+  h_in: &h_in 120  # m: 24, 48, 72, 120, 144, 168, 192
   h_out: &h_out 204
   # with high eta values, exp_params/LR and scheduler_gamma should be reduced, e.g., 1e-5/1e-6 and 0.9
   # to prevent over-fitting. The last option is using fewer epochs (10 or 20), i.e., early stopping
@@ -21,7 +21,7 @@ exp_params:
   LR: 0.0001
   weight_decay: 0.0
   scheduler_gamma: 0.95
-  kld_weight: 0.00001
+  kld_weight: 0.0001
   gz_weight: 0.00001
   manual_seed: 1234
   h_in: *h_in

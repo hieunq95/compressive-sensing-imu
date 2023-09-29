@@ -9,7 +9,7 @@ Python version: 3.8
 ##### 2.1. IMU dataset
 Download DIP-IMU dataset (DIP_IMU_and_Others.zip) from [DIP project website](https://dip.is.tuebingen.mpg.de/index.html).
 
-Unzip the file `DIP_IMU_and_Others`, modify the parameters `file_path` in [`eval_vae.py`](eval_vae.py),  and `data_path` in `configs/*.yaml` files.
+Unzip the file `DIP_IMU_and_Others`, modify the parameters `file_path` in [`eval_vae.py`](eval_vae.py),  and `data_path` in [`configs`](configs)/*.yaml files.
 
 ##### 2.2. SMPL dataset
 Download the SMPL dataset from [SMPL project website](https://smpl.is.tue.mpg.de/download.php).
@@ -30,7 +30,7 @@ Note that we need to pre-process the dataset only once. From the second training
 to False for faster training.
 
 ##### 3.2. Training
-CPU and GPU training: modify parameter `gpus` in the yaml files in ['configs/'](configs). 
+CPU and GPU training: modify parameter `gpus` in the [`configs`](configs)/*.yaml files. 
 For CPU training, the setting is `gpus: []`.
 For single GPU training, the setting is `gpus: [0]`.
 
