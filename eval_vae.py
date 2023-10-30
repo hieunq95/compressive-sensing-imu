@@ -26,6 +26,7 @@ legend_size = 14
 xtick_size = 14
 ytick_size = 14
 line_width = 2
+back_end ='TkAgg'
 
 file_path = '/data/hinguyen/smpl_dataset/DIP_IMU_and_Others/'
 bm_fname = '/home/hinguyen/Data/smpl/models/smpl_male.pkl'
@@ -218,7 +219,7 @@ def reconstruct_pose(vae_ver=0, smpl_vae_ver=0, batch_size=60, batch_id=0, l1_pe
 
 
 def latent_interpolation(vae_ver=0, spml_vae_ver=0, batch_size=60, batch_start=0, batch_end=1):
-    matplotlib.use('TkAgg')
+    matplotlib.use(back_end)
     smpl_vae_config_fname = 'configs/smplvae.yaml'
     vae_config_fname = 'logs/VanillaVAE/version_{}/config.yaml'.format(vae_ver)
     A_fname = 'logs/VanillaVAE/version_{}/A.pt'.format(vae_ver)
@@ -362,7 +363,7 @@ def eval_decoding_time(vae_ver=0, batch_sizes=[60], l1_penalty=0.0001, log_inter
 
     # Plot if it is required
     if plot:
-        matplotlib.use('TkAgg')
+        matplotlib.use(back_end)
         lasso_pow_time_arr = []
         lasso_opt_time_arr = []
         vae_time_arr = []
@@ -375,7 +376,8 @@ def eval_decoding_time(vae_ver=0, batch_sizes=[60], l1_penalty=0.0001, log_inter
             vae_time_arr.append(results['vae_time'])
             dip_time_arr.append(results['dip_time'])
             # print(results['vae_time'])
-        x = ['60', '120', '180', '240', '300', '360', '420']
+        # x = ['60', '120', '180', '240', '300', '360', '420']  # m = 168
+        x = ['10', '20', '30', '40', '50', '60', '70']  # rounded values
 
         # print('vae_time_arr: {}'.format(vae_time_arr))
         y_vae, y_lasso_pow, y_lasso_opt, y_dip = [], [], [], []
@@ -391,9 +393,9 @@ def eval_decoding_time(vae_ver=0, batch_sizes=[60], l1_penalty=0.0001, log_inter
             y_dip_err.append(np.std(dip_time_arr[i]/2))
         plt.errorbar(x, y_vae, yerr=y_vae_err, fmt='-o', capsize=4, linewidth=line_width, label='CS-VAE')
         plt.errorbar(x, y_lasso_pow, yerr=y_lasso_pow_err, fmt='--o', capsize=4, linewidth=line_width, label='Lasso')
-        plt.errorbar(x, y_lasso_opt, yerr=y_lasso_opt_err, fmt='--o', capsize=4, linewidth=line_width, label='Lasso w.o.13b')
+        plt.errorbar(x, y_lasso_opt, yerr=y_lasso_opt_err, fmt='--o', capsize=4, linewidth=line_width, label=r'Lasso w.o.$P_T$')
         plt.errorbar(x, y_dip, yerr=y_dip_err, fmt='--o', capsize=4, linewidth=line_width, label='DIP')
-        plt.xlabel('Batch size', fontsize=font_size)
+        plt.xlabel('Number of input samples ($10^3$)', fontsize=font_size)
         plt.ylabel('Decoding time (s)', fontsize=font_size)
         plt.yscale('log')
         plt.subplots_adjust(left=0.16,
@@ -601,7 +603,7 @@ def eval_baselines(vae_ver=0, batch_size=60, l1_penalty=0.0001, log_interval=10)
 
 
 def plot_results(vae_vers=[0], metric='mn'):
-    matplotlib.use('TkAgg')
+    matplotlib.use(back_end)
     vae_loss_arr = []
     vae_time_arr = []
     lasso_pow_loss = []
@@ -630,10 +632,10 @@ def plot_results(vae_vers=[0], metric='mn'):
         plt.errorbar(x, np.mean(lasso_pow_loss, axis=1), yerr=np.std(lasso_pow_loss, axis=1) / 2,
                      fmt='--o', capsize=4, linewidth=line_width, label='Lasso')
         plt.errorbar(x, np.mean(lasso_opt_loss, axis=1), yerr=np.std(lasso_opt_loss, axis=1) / 2,
-                     fmt='--o', capsize=4, linewidth=line_width, label='Lasso w.o.13b')
+                     fmt='--o', capsize=4, linewidth=line_width, label=r'Lasso w.o.$P_T$')
         plt.errorbar(x, np.mean(dip_loss_arr, axis=1), yerr=np.std(dip_loss_arr, axis=1) / 2,
                      fmt='--o', capsize=4, linewidth=line_width, label='DIP')
-        plt.xlabel('Number of measurements (m)', fontsize=font_size)
+        plt.xlabel('Number of measurements', fontsize=font_size)
         plt.ylabel('Mean square error', fontsize=font_size)
     elif metric == 'noise':
         x = ['1', '5', '10', '50', '100', '500']
@@ -642,7 +644,7 @@ def plot_results(vae_vers=[0], metric='mn'):
         plt.errorbar(x, np.mean(lasso_pow_loss, axis=1), yerr=np.std(lasso_pow_loss, axis=1) / 2,
                      fmt='--o', capsize=4, linewidth=line_width, label='Lasso')
         plt.errorbar(x, np.mean(lasso_opt_loss, axis=1), yerr=np.std(lasso_opt_loss, axis=1) / 2,
-                     fmt='--o', capsize=4, linewidth=line_width, label='Lasso w.o.13b')
+                     fmt='--o', capsize=4, linewidth=line_width, label=r'Lasso w.o.$P_T$')
         plt.errorbar(x, np.mean(dip_loss_arr, axis=1), yerr=np.std(dip_loss_arr, axis=1) / 2,
                      fmt='--o', capsize=4, linewidth=line_width, label='DIP')
         plt.xlabel(r'$\sigma_N\ (10^{-4})$', fontsize=font_size)
@@ -654,10 +656,10 @@ def plot_results(vae_vers=[0], metric='mn'):
         plt.errorbar(x, np.mean(lasso_pow_time_arr, axis=1), yerr=np.std(lasso_pow_time_arr, axis=1),
                      fmt='-o', capsize=4, linewidth=line_width, label='Lasso')
         plt.errorbar(x, np.mean(lasso_opt_time_arr, axis=1), yerr=np.std(lasso_opt_time_arr, axis=1),
-                     fmt='-o', capsize=4, linewidth=line_width, label='Lasso w.o.13b')
+                     fmt='-o', capsize=4, linewidth=line_width, label=r'Lasso w.o.$P_T$')
         plt.errorbar(x, np.mean(dip_time_arr, axis=1), yerr=np.std(dip_time_arr, axis=1),
                      fmt='-o', capsize=4, linewidth=line_width, label='DIP')
-        plt.xlabel('Number of measurements (m)', fontsize=font_size)
+        plt.xlabel('Number of measurements', fontsize=font_size)
         plt.ylabel('Decoding time (s)', fontsize=font_size)
 
     plt.subplots_adjust(left=0.16,
@@ -670,14 +672,14 @@ def plot_results(vae_vers=[0], metric='mn'):
     plt.grid(linestyle='--')
     plt.xticks(fontsize=xtick_size)
     plt.yticks(fontsize=ytick_size)
-    legend = plt.legend(fontsize=legend_size, loc='best', ncol=2)
+    legend = plt.legend(fontsize=legend_size, loc='best', ncol=1)
     legend.get_frame().set_alpha(None)
     legend.get_frame().set_facecolor((0, 0, 0, 0))
     plt.show()
 
 
 def plot_imu_readings(subject='s_03/05', sensor='imu_ori', start_time=0, end_time=4, imu_position=8):
-    matplotlib.use('TkAgg')
+    matplotlib.use(back_end)
     pkl_path = file_path + 'DIP_IMU/{}.pkl'.format(subject)
     data = pkl.load(open(pkl_path, 'rb'), encoding='latin1')[sensor]
     keys = pkl.load(open(pkl_path, 'rb'), encoding='latin1').keys()
@@ -794,4 +796,4 @@ if __name__ == '__main__':
         # Plot line graphs
         plot_results(vae_vers=[1, 2, 3, 4, 5, 6], metric='mn')
         plot_results(vae_vers=[13, 12, 11, 10, 9, 8], metric='noise')
-        eval_decoding_time(vae_ver=6, batch_sizes=[60, 120, 180, 240, 300, 360, 420], plot=True)
+        eval_decoding_time(vae_ver=5, batch_sizes=[60, 120, 180, 240, 300, 360, 420], plot=True)
