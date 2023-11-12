@@ -1,9 +1,20 @@
 ## Generative model-based compressive sensing for IMU data
 
 #### 1. Install packages
-`pip install -r requirements.txt`
+Dependencies:
+- Python version: 3.8
+- numpy
+- pytorch
+- pytorch-lightning
+- PyYAML
+- scipy
+- scikit-learn
+- trimesh
+- pyrender
+- smplx
+- matplotlib
 
-Python version: 3.8
+To install all packages: `pip install -r requirements.txt`
 
 #### 2. Download datasets
 ##### 2.1. IMU dataset
