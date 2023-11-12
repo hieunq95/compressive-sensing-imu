@@ -10,6 +10,7 @@ import numpy as np
 import torch
 import matplotlib
 import matplotlib.pyplot as plt
+from scipy.fft import rfft, rfftfreq
 from torch.utils.data import DataLoader
 from torch.nn import functional as F
 from train_smpl_vae import SMPLexperiment
@@ -691,7 +692,7 @@ def plot_imu_readings(subject='s_03/05', sensor='imu_ori', start_time=0, end_tim
     if end_time >= int(seq_len / sampling_rate):
         end_time = int(seq_len / sampling_rate)
 
-    t = np.arange(0, seq_len / sampling_rate, 1 / sampling_rate)
+    t = np.arange(0, seq_len / sampling_rate, 1.0 / sampling_rate)
     if sensor == 'imu_acc':
         y = data[:, imu_position, :]
     else:
@@ -700,6 +701,7 @@ def plot_imu_readings(subject='s_03/05', sensor='imu_ori', start_time=0, end_tim
     print('y: {}'.format(y.shape))
     t_display = t[start_time * sampling_rate: end_time * sampling_rate]
     y_display = y[start_time * sampling_rate: end_time * sampling_rate]
+    print('y_display: {}'.format(y_display.shape))
     plt.subplots(figsize=(6, 2))
     if sensor == 'imu_acc':
         plt.plot(t_display, y_display[:, 0], label='X', linewidth=line_width)
@@ -724,6 +726,49 @@ def plot_imu_readings(subject='s_03/05', sensor='imu_ori', start_time=0, end_tim
                         wspace=0.2,
                         hspace=0.255)
     plt.show()
+
+    # Plot FFT of IMU data
+    if sensor == 'imu_acc':
+        fig, axs = plt.subplots(2)
+
+        axs[0].plot(t_display, y_display[:, 0], label='X', linewidth=line_width)
+        axs[0].plot(t_display, y_display[:, 1], label='Y', linewidth=line_width)
+        axs[0].plot(t_display, y_display[:, 2], label='Z', linewidth=line_width)
+        axs[0].set_ylabel('Acceleration', fontsize=font_size)
+        axs[0].set_xlabel('Time (s)', fontsize=font_size)
+        axs[0].legend()
+
+        y_len = len(y_display[:, 0])
+        t_step = 1.0 / sampling_rate
+
+        yf_1 = rfft(y_display[:, 0])  # FFT for real-valued inputs
+        xf_1 = rfftfreq(y_len, t_step)
+
+        yf_2 = rfft(y_display[:, 1])
+        xf_2 = rfftfreq(y_len, t_step)
+
+        yf_3 = rfft(y_display[:, 2])
+        xf_3 = rfftfreq(y_len, t_step)
+
+        axs[1].stem(xf_1, np.abs(yf_1), label='X', linefmt='#1f77b4', markerfmt='o')
+        # axs[1].stem(xf_2, np.abs(yf_2), label='Y', linefmt='#ff7f0e', markerfmt='*')
+        # axs[1].stem(xf_3, 1.0 / y_len * np.abs(yf_3), label='Z', linefmt='#2ca02c', markerfmt='D')
+        axs[1].set_ylabel('Amplitude', fontsize=font_size)
+        axs[1].set_xlabel('Frequency (Hz)', fontsize=font_size)
+        axs[1].legend()
+
+        plt.subplots_adjust(left=0.16,
+                            bottom=0.13,
+                            right=0.97,
+                            top=0.97,
+                            wspace=0.2,
+                            hspace=0.37)
+
+        axs[0].tick_params(axis='both', which='major', labelsize=xtick_size)
+        axs[1].tick_params(axis='both', which='major', labelsize=xtick_size)
+
+        plt.legend()
+        plt.show()
 
 
 def visualize_pose(subject='s_03/05'):
@@ -781,8 +826,8 @@ if __name__ == '__main__':
     # /--- ***** Part 2: Get simulation results after evaluation *******-------/
     else:
         # Visualize IMU data and pretrained SMPL-VAE model
-        plot_imu_readings(subject='s_03/04', sensor='imu_ori', start_time=0, end_time=10, imu_position=imu_map['lwrist'])
-        # visualize_pose(subject='s_03/04')
+        plot_imu_readings(subject='s_01/04', sensor='imu_acc', start_time=0, end_time=8, imu_position=imu_map['lwrist'])
+        visualize_pose(subject='s_01/04')
 
         eval_smpl_vae(smpl_vae_ver=24, batch_id=99)
 
